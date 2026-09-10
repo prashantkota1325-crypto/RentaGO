@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Vendor Dashboard{% endblock %}
+{% block content %}
+<h2>Vendor Dashboard <a class="btn btn-outline-primary btn-sm ms-2" href="/dashboards/vendor/resources">My Drivers &amp; Vehicles</a> <a class="btn btn-outline-success btn-sm" href="/dashboards/vendor/billing">Vendor → RentaGO Invoices</a></h2>
+
+{% if bookings %}
+<div class="alert alert-info">RentaGO Contact: <a href="tel:9923402200">9923402200</a></div>
+<div class="card mb-4 mt-3">
+  <div class="card-header"><strong>Your Assigned Bookings ({{ kpi.bookings }})</strong></div>
+  <div class="card-body table-responsive-cards">
+    <table class="table table-sm table-striped">
+      <thead><tr><th>Booking ID</th><th>Guest Company</th><th>Guest Name</th><th>Pickup Date &amp; Time</th><th>Pickup Stops / GPS</th><th>Drop / GPS</th><th>Status</th></tr></thead>
+      <tbody>
+      {% for b in bookings %}
+        <tr>
+          <td>{{ b.booking_id }}</td>
+          <td>{{ b.company or '-' }}</td><td>{{ b.guest }}</td>
+          <td>{{ b.pickup_date }} {{ b.pickup_time }}</td>
+          <td>{{ b.pickup_address or '-' }}{% for s in b.stops if s.label.startswith('Pickup') %}<br><small>{{ s.label }}: {{ s.lat }}, {{ s.lon }}</small>{% endfor %}</td>
+          <td>{{ b.drop_address or '-' }}{% for s in b.stops if s.label.startswith('Drop') %}<br><small>{{ s.label }}: {{ s.lat }}, {{ s.lon }}</small>{% endfor %}</td>
+          <td><span class="badge {% if b.status == '1-Pending' %}bg-warning text-dark{% elif b.status == '2-Confirmed' %}bg-success{% else %}bg-danger{% endif %}">{{ b.status }}</span>
+            <div class="small text-muted">{{ b.reason }}</div></td>
+        </tr>
+      {% else %}
+        <tr><td colspan="7" class="text-center text-muted">No bookings assigned to you yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="card mb-4 mt-3">
+  <div class="card-header"><strong>Bookings by Vendor ({{ kpi.vendors }} vendors)</strong></div>
+  <div class="card-body table-responsive-cards">
+    <table class="table table-sm table-striped">
+      <thead><tr><th>Vendor</th><th>Total Bookings</th><th>Confirmed</th><th>Cancelled</th></tr></thead>
+      <tbody>
+      {% for v in vendor_rows %}
+        <tr>
+          <td>{{ v.vendor }}</td>
+          <td>{{ v.total }}</td>
+          <td>{{ v.confirmed }}</td>
+          <td>{{ v.cancelled }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="4" class="text-center text-muted">No bookings yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

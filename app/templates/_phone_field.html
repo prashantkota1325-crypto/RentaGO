@@ -1,0 +1,16 @@
+{# Reusable phone field with automatic country + city (area) code prefix.
+   expectations: name, [label], [default_country], [default_area], [number], [required]
+   Renders a hidden input carrying `name` (the server field), plus visible
+   country/city/number controls managed by /static/js/phone-prefix.js. #}
+{% macro phone_field(name, label="Mobile", default_country="IN", default_area="", number="", required=false, placeholder="") -%}
+<div class="phone-field" data-default-country="{{ default_country }}" data-default-area="{{ default_area }}">
+  <label class="form-label">{{ label }}</label>
+  <div class="input-group">
+    <select class="phone-country form-select" style="max-width:10rem" aria-label="Country"></select>
+    <select class="phone-city form-select" style="max-width:11rem" aria-label="City / area"></select>
+    <input class="phone-number form-control" value="{{ number }}" placeholder="{{ placeholder or (default_country == 'IN' and '10-digit number' or 'local number') }}" aria-label="Number">
+  </div>
+  <input type="hidden" class="phone-value" name="{{ name }}" value="{% if number %}+{{ default_country and (default_country == 'IN' and '91' or '') }}{% endif %}">
+  <div class="form-text">Pick country &amp; city; the country and STD prefix are added automatically.</div>
+</div>
+{%- endmacro %}

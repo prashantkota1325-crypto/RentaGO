@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Ops Dashboard{% endblock %}
+{% block content %}
+<h2>Ops Dashboard</h2>
+<div class="alert alert-success py-1 small">Live operations refresh enabled · updating every 60 seconds</div>
+
+{% set msg = request.query_params.get('msg', '') %}
+{% if msg == 'sla-checked' %}
+<div class="alert alert-success alert-dismissible fade show">SLA check executed.
+  <button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
+{% endif %}
+
+<div class="row mt-3 mb-3">
+  <div class="col-md-3"><div class="card text-center"><div class="card-body">
+    <h3>{{ pending_alloc|length }}</h3><p class="mb-0">Pending Allocations</p></div></div></div>
+  <div class="col-md-3"><div class="card text-center"><div class="card-body">
+    <h3>{{ active|length }}</h3><p class="mb-0">Active Trips</p></div></div></div>
+  <div class="col-md-3"><div class="card text-center"><div class="card-body">
+    <h3>{{ today_pickups }}</h3><p class="mb-0">Today's Pickups</p></div></div></div>
+  <div class="col-md-3"><div class="card text-center"><div class="card-body">
+    <h3 class="{% if red_flags %}text-danger{% endif %}">{{ red_flags }}</h3><p class="mb-0">GPS Red Flags</p></div></div></div>
+</div>
+<div class="card mb-4"><div class="card-header"><strong>Today Operational Control</strong></div><div class="card-body"><div class="row g-2 small"><div class="col-md-3"><strong>Bookings</strong><br>{{ ops_kpi.bookings }} total · {{ ops_kpi.confirmed }} confirmed · {{ ops_kpi.pending }} pending</div><div class="col-md-3"><strong>Vehicles</strong><br>{{ ops_kpi.vehicles_allocated }} / {{ ops_kpi.vehicles_required }} allocated</div><div class="col-md-3"><strong>Drivers</strong><br>{{ ops_kpi.drivers_confirmed }} / {{ ops_kpi.drivers_required }} confirmed</div><div class="col-md-3"><strong>Trips</strong><br>{{ ops_kpi.trips_started }} started · {{ ops_kpi.trips_completed }} completed</div><div class="col-md-3 mt-2"><strong>Payment Pending</strong><br>{{ ops_kpi.payment_pending }}</div><div class="col-md-3 mt-2"><strong>Customer Complaints</strong><br>{{ ops_kpi.customer_complaints }}</div></div></div></div>
+<div class="card mb-4"><div class="card-header"><strong>Vehicle &amp; Driver Compliance</strong></div><div class="card-body"><div class="row text-center"><div class="col-md-4 text-success"><h3>{{ ops_kpi.compliance_green }}</h3><div>GREEN</div></div><div class="col-md-4 text-warning"><h3>{{ ops_kpi.compliance_amber }}</h3><div>AMBER</div></div><div class="col-md-4 text-danger"><h3>{{ ops_kpi.compliance_red }}</h3><div>RED</div></div></div></div></div>
+
+<div class="d-flex gap-2 flex-wrap mb-3">
+  <form method="post" action="/dashboards/sla-check">
+    <button class="btn btn-danger">Run SLA Check</button>
+  </form>
+  <a class="btn btn-outline-primary" href="/dashboards/tracking">Tracking Dashboard</a>
+  <a class="btn btn-outline-secondary" href="/bookings">All Bookings</a>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header"><strong>SLA Alerts</strong>
+    <span class="badge {% if alerts %}bg-danger{% else %}bg-success{% endif %} ms-2">{{ alerts|length }}</span>
+  </div>
+  <div class="card-body">
+    {% if alerts %}
+    <ul class="list-group list-group-flush">
+      {% for a in alerts %}
+      <li class="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <span>
+          <span class="badge bg-{{ a.level }} me-2 {% if a.level == 'info' %}text-dark{% endif %}">{{ a.kind }}</span>
+          <a href="/bookings/{{ a.booking_id }}"><b>{{ a.booking_id }}</b></a> &mdash; {{ a.message }}
+        </span>
+        <span class="text-muted small">{{ a.minutes }} min</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="text-muted mb-0">No SLA alerts. (Sweep runs automatically every 5 minutes for operators.)</p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header"><strong>Pending Allocations (1-Pending)</strong></div>
+  <div class="card-body table-responsive-cards">
+    <table class="table table-sm table-striped">
+      <thead><tr><th>Booking</th><th>Type</th><th>Company</th><th>Guest</th>
+        <th>Pickup</th><th>Vendor</th><th>Driver</th><th>Stage</th></tr></thead>
+      <tbody>
+      {% for b in pending_alloc %}
+        <tr>
+          <td><a href="/bookings/{{ b.booking_id }}">{{ b.booking_id }}</a></td>
+          <td>{{ b.booking_type }}</td><td>{{ b.company }}</td><td>{{ b.guest }}</td>
+          <td>{{ b.pickup_date }} {{ b.pickup_time }}</td>
+          <td>{{ b.vendor or '-' }}</td><td>{{ b.driver or '-' }}</td>
+          <td><span class="badge bg-warning text-dark">{{ b.reason }}</span></td>
+        </tr>
+      {% else %}
+        <tr><td colspan="8" class="text-center text-muted">No pending allocations.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><strong>Active Trips</strong></div>
+  <div class="card-body table-responsive-cards">
+    <table class="table table-sm table-striped">
+      <thead><tr><th>Booking</th><th>Guest</th><th>Driver</th><th>Vehicle</th>
+        <th>Pickup</th><th>GPS Sync</th></tr></thead>
+      <tbody>
+      {% for t in active %}
+        <tr>
+          <td><a href="/bookings/{{ t.booking_id }}">{{ t.booking_id }}</a></td>
+          <td>{{ t.guest }}</td><td>{{ t.driver }}</td><td>{{ t.vehicle }}</td>
+          <td>{{ t.pickup_date }} {{ t.pickup_time }}</td>
+          <td><span class="badge {% if t.sync == 'SYNCED' %}bg-success{% elif t.sync == 'RED FLAG' %}bg-danger{% else %}bg-secondary{% endif %}">{{ t.sync or '-' }}</span></td>
+        </tr>
+      {% else %}
+        <tr><td colspan="6" class="text-center text-muted">No active trips.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+<script>window.setInterval(function () { window.location.reload(); }, 60000);</script>
+{% endblock %}

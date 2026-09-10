@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Compliance{% endblock %}
+{% block content %}
+<h2>Compliance</h2>
+
+<div class="row mt-3 mb-3">
+  <div class="col-md-6">
+    <div class="card mb-4">
+      <div class="card-header"><strong>Users by Status</strong></div>
+      <div class="card-body">
+        <table class="table table-sm table-striped">
+          <thead><tr><th>Status</th><th>Count</th></tr></thead>
+          <tbody>
+          {% for s in user_status %}
+            <tr><td>{{ s.status }}</td><td>{{ s.count }}</td></tr>
+          {% else %}
+            <tr><td colspan="2" class="text-muted">No users.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card mb-4">
+      <div class="card-header"><strong>GPS Red Flags</strong></div>
+      <div class="card-body">
+        <h3 class="{% if red_flags %}text-danger{% endif %}">{{ red_flags }}</h3>
+        <p class="text-muted mb-0">Bookings with driver/guest location mismatch &gt; 100 m.</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card mb-4">
+      <div class="card-header"><strong>Recent Login / Logout Log</strong></div>
+      <div class="card-body table-responsive-cards">
+        <table class="table table-sm table-striped">
+          <thead><tr><th>Log</th><th>User</th><th>Role</th><th>Login</th><th>Logout</th><th>Hrs</th></tr></thead>
+          <tbody>
+          {% for l in login_rows %}
+            <tr>
+              <td>{{ l.log_id }}</td>
+              <td>{{ l.user_name or l.user_id }}</td>
+              <td>{{ l.role }}</td>
+              <td>{{ l.login_dt }}</td>
+              <td>{{ l.logout_dt or '-' }}</td>
+              <td>{{ l.hours_worked if l.hours_worked is not none else '-' }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="6" class="text-muted">No logins recorded yet.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><strong>Recent Audit Trail</strong></div>
+  <div class="card-body table-responsive-cards">
+    <table class="table table-sm table-striped">
+      <thead><tr><th>Date</th><th>Time</th><th>User</th><th>Action</th><th>Record</th><th>Notes</th></tr></thead>
+      <tbody>
+      {% for a in audit_rows %}
+        <tr>
+          <td>{{ a.date }}</td><td>{{ a.time }}</td>
+          <td>{{ a.user_id }}</td>
+          <td>{{ a.action }}</td>
+          <td>{{ a.record }}</td>
+          <td class="text-muted small">{{ a.notes }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="6" class="text-muted">No audit entries yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

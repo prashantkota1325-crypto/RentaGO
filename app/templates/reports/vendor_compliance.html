@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Vendor Compliance{% endblock %}
+{% block content %}
+<h2>Vendor Fleet &amp; Driver Compliance</h2>
+{% if is_vendor %}<div class="alert alert-info">Vendor: {{ user.company_name or user.company }}</div>{% else %}<form method="get" class="row g-2 mb-4"><div class="col-md-6"><label class="form-label">Select Vendor</label><select name="vendor_id" class="form-select" required><option value="">Select Vendor</option>{% for v in vendors %}<option value="{{ v.id }}" {% if selected_vendor == v.id %}selected{% endif %}>{{ v.name }} ({{ v.id }})</option>{% endfor %}</select></div><div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary">View Report</button></div></form>{% endif %}
+{% if selected_vendor %}
+<h4>Vehicles</h4>
+<div class="table-responsive"><table class="table table-sm table-striped"><thead><tr><th>Registration</th><th>Category</th><th>Status</th><th>Insurance</th><th>Permit</th><th>Fitness</th><th>PUC</th></tr></thead><tbody>
+{% for v in vehicles %}<tr><td>{{ v.reg_number }}</td><td>{{ v.category or '-' }}</td><td>{{ v.status or '-' }}</td>{% for k in ['Insurance','Permit','Fitness','PUC'] %}<td><span class="badge {% if v.documents[k] == 'Valid' %}bg-success{% elif v.documents[k] == 'Missing' %}bg-secondary{% else %}bg-danger{% endif %}">{{ v.documents[k] }}</span></td>{% endfor %}</tr>{% else %}<tr><td colspan="7">No vehicles found.</td></tr>{% endfor %}
+</tbody></table></div>
+<h4 class="mt-4">Drivers</h4>
+<div class="table-responsive"><table class="table table-sm table-striped"><thead><tr><th>Driver</th><th>Mobile</th><th>License</th><th>License Status</th><th>Status</th></tr></thead><tbody>
+{% for d in drivers %}<tr><td>{{ d.driver_name }}</td><td>{{ d.mobile or '-' }}</td><td>{{ d.license_no or '-' }}</td><td><span class="badge {% if d.license_status == 'Valid' %}bg-success{% elif d.license_status == 'Missing' %}bg-secondary{% else %}bg-danger{% endif %}">{{ d.license_status }}</span></td><td>{{ d.status or '-' }}</td></tr>{% else %}<tr><td colspan="5">No drivers found.</td></tr>{% endfor %}
+</tbody></table></div>
+<p class="text-muted small">Compliance status is Valid, Expired, Missing, or Due within {{ due_days }} days.</p>
+{% endif %}
+{% endblock %}

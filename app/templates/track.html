@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}RentaGO Live Tracking{% endblock %}
+{% block content %}
+<div class="row justify-content-center mt-4">
+  <div class="col-md-6 col-11">
+    <div class="card shadow">
+      <div class="card-body text-center">
+        <img src="/static/img/rentago-logo.svg" alt="RentaGO"
+             style="max-width:220px; height:auto" class="mb-3">
+        {% if error %}
+          {% if error == 'window-closed' %}
+          <h5>Tracking not open yet</h5>
+          <p class="text-muted mb-0">This trip's tracking window has not started
+            or the trip has ended. RentaGO will send the link at the right time.</p>
+          {% elif error == 'not-active' %}
+          <h5>Trip not active</h5>
+          <p class="text-muted mb-0">Live tracking is only active between
+            confirmation and trip completion.</p>
+          {% elif error == 'participant-login-required' %}
+          <h5>Participant login required</h5>
+          <p class="text-muted mb-0">This private tracking link works only after the assigned Guest or Driver signs in from a mobile phone or tablet.</p>
+          {% else %}
+          <h5>Invalid tracking link</h5>
+          <p class="text-muted mb-0">Please use the link RentaGO sent you on WhatsApp.</p>
+          {% endif %}
+        {% else %}
+         <h5 class="mb-1">Live Tracking &mdash; {{ who|capitalize }}</h5>
+         <div class="text-start mb-2"><a class="btn btn-sm btn-outline-secondary" href="/mobile/{{ who }}">&larr; Back to {{ who|capitalize }} Mobile</a></div>
+        <div class="text-muted small">
+          {% if name %}{{ name }} &middot; {% endif %}Booking {{ booking_id }}
+        </div>
+        <div class="text-muted small mb-3">{{ pickup }}</div>
+
+        {% if not window_open %}
+        <div class="alert alert-warning py-2 small mb-3">
+          The {{ who }} tracking window is not open yet
+          ({{ '2 hours' if who == 'driver' else '15 minutes' }} before pickup).
+          Keep this page open &mdash; reporting starts automatically.
+        </div>
+        {% endif %}
+
+        <div id="status" class="alert alert-secondary py-2 small">
+          Tap <b>Allow</b> when your browser asks for location access.<br>
+          Your GPS location is then shared with RentaGO Operations
+           automatically every 120 seconds &mdash; nothing else to do.
+        </div>
+        <div id="last" class="small text-muted"></div>
+        <noscript><div class="alert alert-danger small">Please enable JavaScript.</div></noscript>
+        {% endif %}
+      </div>
+    </div>
+    <p class="text-center text-muted small mt-2">RentaGO &mdash; Car Rental Management System</p>
+  </div>
+</div>
+
+{% if not error %}
+<script>
+(function () {
+  var status = document.getElementById("status");
+  var last = document.getElementById("last");
+  var busy = false;
+
+  function send(pos) {
+    if (busy) return;
+    busy = true;
+    fetch(location.pathname + "/ping", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lat: pos.coords.latitude, lon: pos.coords.longitude })
+    }).then(function (r) { return r.json(); })
+      .then(function (d) {
+        busy = false;
+        var t = new Date().toLocaleTimeString();
+        if (d.ok) {
+          status.className = "alert alert-success py-2 small";
+          status.innerHTML = "<b>Location sharing active</b><br>" +
+            "Last reported: " + t +
+            (d.distance_m !== null && d.distance_m !== undefined
+              ? " &nbsp;|&nbsp; distance to guest: " + Math.round(d.distance_m) + " m" +
+                (d.status === "RED FLAG" ? " &mdash; <b>RED FLAG</b>" : "")
+              : "");
+        } else if (d.error && d.error.indexOf("window-closed") === 0) {
+          status.className = "alert alert-warning py-2 small";
+          status.innerHTML = "Tracking window not open yet - your position will " +
+            "be picked up automatically once it opens. Last attempt: " + t;
+        } else {
+          status.className = "alert alert-danger py-2 small";
+          status.innerHTML = "Could not report location (" + (d.error || "error") +
+            "). Keep this page open; it retries every 30 seconds.";
+        }
+        last.textContent = "";
+      })
+      .catch(function () { busy = false; });
+  }
+
+  function fail(err) {
+    status.className = "alert alert-danger py-2 small";
+    status.innerHTML = "Location access was blocked (" + err.message + ")." +
+      "<br>Please tap the <b>location icon</b> in the browser address bar, " +
+      "set Location to <b>Allow</b>, and reload this page.";
+  }
+
+  if (navigator.geolocation) {
+           navigator.geolocation.getCurrentPosition(send, fail, { enableHighAccuracy: true, timeout: 20000 });
+            setInterval(function () {
+       navigator.geolocation.getCurrentPosition(send, fail,
+         { enableHighAccuracy: true, timeout: 20000 });
+       }, 120000);
+       document.addEventListener("visibilitychange", function () {
+         if (!document.hidden) navigator.geolocation.getCurrentPosition(send, fail,
+           { enableHighAccuracy: true, timeout: 20000 });
+       });
+  } else {
+    status.className = "alert alert-danger py-2 small";
+    status.textContent = "This browser does not support location sharing.";
+  }
+})();
+</script>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}GPS Trail - {{ b.booking_id }}{% endblock %}
+{% block content %}
+<a href="{% if from_mobile %}/mobile/{{ trail_who or 'driver' }}{% else %}/bookings/{{ b.booking_id }}{% endif %}">&larr; Back to {% if from_mobile %}{{ (trail_who or 'driver')|capitalize }} Mobile Trip{% else %}{{ b.booking_id }}{% endif %}</a>
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mt-2">
+<h2>GPS Trail - {{ b.booking_id }}{% if trail_who %} ({{ trail_who|capitalize }}){% endif %}</h2>
+  <div><span class="badge bg-success me-2">Auto-refresh: 30s</span><a class="btn btn-outline-secondary" href="/bookings/{{ b.booking_id }}/gps-trail/csv">Download CSV</a></div>
+</div>
+<div class="row g-2 mb-3">
+  <div class="col-md-3"><div class="card"><div class="card-body"><div class="text-muted small">Total Captures</div><strong>{{ summary.total }}</strong></div></div></div>
+  <div class="col-md-3"><div class="card"><div class="card-body"><div class="text-muted small">Driver Captures</div><strong>{{ summary.driver }}</strong></div></div></div>
+  <div class="col-md-3"><div class="card"><div class="card-body"><div class="text-muted small">Guest Captures</div><strong>{{ summary.guest }}</strong></div></div></div>
+  <div class="col-md-3"><div class="card"><div class="card-body"><div class="text-muted small">Red Flags</div><strong class="{% if summary.red_flags %}text-danger{% endif %}">{{ summary.red_flags }}</strong></div></div></div>
+</div>
+{% if remaining_km is not none %}<div class="alert alert-info"><strong>Remaining to final destination:</strong> {{ remaining_km }} km | approximately {{ remaining_hours }} hours{% if remaining_source %} <span class="small">({{ remaining_source }})</span>{% endif %}</div>{% endif %}
+{% if not captures %}
+<div class="alert alert-info">No GPS captures have been received yet. The Guest or Driver must open the tracking link, allow location access, and keep the tracking page active.</div>
+{% else %}
+<p class="text-muted small">First capture: {{ summary.first }} | Last capture: {{ summary.last }} | Driver path: {{ summary.driver_km }} km | Guest path: {{ summary.guest_km }} km</p>
+{% if show_planned_route and b.planned_kms %}<p class="small">Planned Google Routes distance: <strong>{{ b.planned_kms }} km</strong> | Tracked Driver path: <strong>{{ summary.driver_km }} km</strong></p>{% endif %}
+{% if b.route_deviation_status == 'RED FLAG' %}<div class="alert alert-danger"><strong>RED FLAG: Route deviation detected.</strong> Planned {{ b.planned_kms }} km; tracked {{ b.route_deviation_distance_km }} km ({{ b.route_deviation_percent }}% deviation). RentaGO Operations must contact the Driver and record the reason.</div>{% endif %}
+<div id="gpsTrailMap" style="height:420px" class="rounded border mb-3"></div>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(function () {
+  var points = {{ map_points|tojson }};
+  if (!points.length) return;
+  var coords = points.map(function (p) { return [Number(p.lat), Number(p.lon)]; });
+  var map = L.map('gpsTrailMap').fitBounds(coords, {padding: [20, 20]});
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+  var line = L.polyline(coords, {color: '#16386e', weight: 4}).addTo(map);
+  points.forEach(function (p, i) {
+    var color = p.who === 'driver' ? '#0d6efd' : '#198754';
+    var marker = L.circleMarker([Number(p.lat), Number(p.lon)], {
+      radius: i === 0 || i === points.length - 1 ? 8 : 5,
+      color: color, fillColor: color, fillOpacity: 0.85
+    }).addTo(map);
+    marker.bindPopup('<b>' + p.who + '</b><br>' + (p.address || 'Address unavailable') +
+      '<br>' + p.captured + '<br>Capture ' + (i + 1) + ' of ' + points.length);
+  });
+  L.control.scale().addTo(map);
+})();
+</script>
+<div class="table-responsive-cards">
+<table class="table table-striped table-hover table-sm">
+  <thead><tr><th>Capture</th><th>Party</th><th>Address</th><th>Latitude</th><th>Longitude</th><th>Distance</th><th>Status</th><th>Captured</th><th>Map</th></tr></thead>
+  <tbody>
+  {% for c in captures %}
+  <tr class="{% if c.location_sync == 'RED FLAG' %}table-danger{% endif %}">
+    <td>{{ c.log_id }}</td><td>{{ c.who }}</td><td>{{ c.location_address or '-' }}</td><td>{{ c.lat }}</td><td>{{ c.lon }}</td>
+    <td>{{ c.distance_m or '-' }} m</td><td>{{ c.location_sync or '-' }}</td><td>{{ c.captured }}</td>
+    <td><a href="https://www.google.com/maps?q={{ c.lat }},{{ c.lon }}" target="_blank">Open</a></td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+<script>
+  window.setInterval(function () { window.location.reload(); }, 30000);
+</script>
+{% if show_planned_route and planned_map_points %}
+<h4 class="mt-4">Planned Route Reference</h4>
+<p class="small text-muted">Red dashed line: planned multi-stop route. Blue line above: actual captured path.</p>
+<div id="plannedRouteMap" style="height:420px" class="rounded border mb-3"></div>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(function () {
+  var points = {{ planned_map_points|tojson }};
+  var coords = points.map(function (p) { return [Number(p.lat), Number(p.lon)]; });
+  var map = L.map('plannedRouteMap').fitBounds(coords, {padding: [20, 20]});
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {attribution: '&copy; OpenStreetMap contributors'}).addTo(map);
+  L.polyline(coords, {color: '#dc3545', weight: 4, dashArray: '8, 8'}).addTo(map);
+  points.forEach(function (p, i) {
+    var marker = L.circleMarker([Number(p.lat), Number(p.lon)], {radius: 8, color: '#dc3545', fillColor: '#dc3545', fillOpacity: 0.85}).addTo(map);
+    marker.bindPopup('<b>' + (p.label || ('Stop ' + (i + 1))) + '</b><br>' + (p.address || 'GPS captured'));
+  });
+  L.control.scale().addTo(map);
+})();
+</script>
+{% endif %}
+{% endblock %}

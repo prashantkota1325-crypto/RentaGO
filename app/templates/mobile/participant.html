@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}{{ who|capitalize }} Mobile Trip{% endblock %}
+{% block content %}
+<div class="container-fluid px-1">
+  <h3>{{ who|capitalize }} Trip Portal</h3>
+  {% if not booking %}<div class="alert alert-info">No current booking is assigned to this account.</div>
+  {% else %}
+  {% if message == 'tracking-shared' %}<div class="alert alert-success">Live tracking link shared with RentaGO.</div>{% endif %}
+  {% if message == 'sos-sent' %}<div class="alert alert-danger"><strong>SOS sent.</strong> Calling RentaGO Helpdesk...</div><script>setTimeout(function(){ window.location.href='tel:9923402200'; }, 300);</script>{% endif %}
+  {% if message == 'logout-after-end' %}<div class="alert alert-warning">Guest logout is available after you press End Trip.</div>{% endif %}
+   {% if who == 'driver' %}<div class="card mb-3"><div class="card-body text-start">
+     <h5>Current Trip</h5><dl class="row small mb-0"><dt class="col-5">Booking ID</dt><dd class="col-7">{{ booking.booking_id }}</dd><dt class="col-5">Guest Name</dt><dd class="col-7">{{ booking.guest_name_1 or '-' }}</dd><dt class="col-5">Pickup Date &amp; Time</dt><dd class="col-7">{{ booking.pickup_date }} {{ booking.pickup_time or '-' }}</dd>{% for s in driver_stops %}<dt class="col-5">{{ s.label }}</dt><dd class="col-7">{{ s.address or '-' }}{% if s.lat is not none %}<br><a target="_blank" href="https://www.google.com/maps?q={{ s.lat }},{{ s.lon }}">GPS: {{ s.lat }}, {{ s.lon }}</a>{% else %}<br><span class="text-muted">GPS unavailable</span>{% endif %}</dd>{% endfor %}</dl>
+     <a class="btn btn-outline-danger btn-lg w-100 mt-3" href="tel:{{ rentago_contact }}">Call RentaGO: {{ rentago_contact }}</a>
+    </div></div>{% else %}<div class="card mb-3"><div class="card-body text-start">
+     <h5>{{ booking.booking_id }}</h5>
+     <dl class="row small mb-0"><dt class="col-5">Driver Name</dt><dd class="col-7">{{ booking.driver_name or '-' }}</dd><dt class="col-5">Driver Mobile</dt><dd class="col-7">{{ booking.driver_contact or '-' }}</dd><dt class="col-5">Company SPOC</dt><dd class="col-7">{{ booking.admin_name or 'Not captured' }}</dd><dt class="col-5">Company SPOC Contact</dt><dd class="col-7">{% if booking.admin_contact %}<a href="tel:{{ booking.admin_contact }}">{{ booking.admin_contact }}</a>{% else %}Not captured{% endif %}</dd><dt class="col-5">Pickup Date &amp; Time</dt><dd class="col-7">{{ booking.pickup_date }} {{ booking.pickup_time or '-' }}</dd><dt class="col-5">Pickup Address</dt><dd class="col-7">{{ booking.pickup_address or '-' }}</dd><dt class="col-5">Drop Address</dt><dd class="col-7">{{ booking.drop_address or '-' }}</dd></dl>
+     <div class="text-center text-muted small mt-3">RentaGO Contact: <a href="tel:{{ rentago_contact }}">{{ rentago_contact }}</a></div>
+   </div></div>{% endif %}
+  {% if tracking_link %}<div class="alert alert-info">Keep this seven-action screen open. Open GPS tracking separately:</div><a class="btn btn-outline-success btn-lg mb-3" href="{{ tracking_link }}" target="_blank">Open Live Tracking Window</a>{% endif %}
+  <button type="button" class="btn btn-outline-secondary mb-2" onclick="document.getElementById('mobileActions').classList.toggle('d-none')">Minimize / Show Actions</button>
+  <div id="mobileActions" class="d-grid gap-2">
+    <form method="post" action="/bookings/{{ booking.booking_id }}/share-live-tracking/{{ who }}"><button class="btn btn-success btn-lg w-100">1. Share Live Location</button></form>
+    {% if who == 'guest' %}
+    <form method="post" action="/bookings/{{ booking.booking_id }}/trip/start-guest"><button class="btn btn-primary btn-lg w-100">2. Start Trip</button></form>
+    <form method="post" action="/bookings/{{ booking.booking_id }}/sos"><button class="btn btn-danger btn-lg w-100">3. SOS Emergency</button></form>
+    <form method="post" action="/bookings/{{ booking.booking_id }}/trip/end-guest"><button class="btn btn-warning btn-lg w-100">4. End Trip</button></form>
+     {% if booking.status_reason in ['Guest Trip Started - Awaiting Driver Confirmation','Trip In Progress','Guest Trip Ended - Awaiting Driver Confirmation','Trip Completed'] %}<a class="btn btn-outline-success btn-lg" href="/bookings/{{ booking.booking_id }}?from=mobile&who=guest#guest-feedback-form">5. Guest Feedback</a><a class="btn btn-outline-danger btn-lg" href="/bookings/{{ booking.booking_id }}?from=mobile&who=guest#guest-feedback-form">6. Safety Feedback</a>{% else %}<button class="btn btn-outline-secondary btn-lg" disabled>5. Guest Feedback - Available after trip starts</button><button class="btn btn-outline-secondary btn-lg" disabled>6. Safety Feedback - Available after trip starts</button>{% endif %}
+     <form method="post" action="/mobile/guest/{{ booking.booking_id }}/signature"><input type="hidden" name="signature_type" value="guest"><button class="btn btn-outline-primary btn-lg w-100">7. Guest Signature</button></form>
+     <a class="btn btn-outline-info btn-lg" href="/bookings/{{ booking.booking_id }}/driver-profile?from=mobile">8. Driver Profile</a>
+     {% else %}
+     {% if booking.status_reason == 'Guest Trip Started - Awaiting Driver Confirmation' %}<form method="post" action="/bookings/{{ booking.booking_id }}/trip/start-driver"><input name="pickup_start_km" type="number" min="0" step="0.1" class="form-control form-control-lg" placeholder="Start Km" required><button class="btn btn-primary btn-lg w-100 mt-2">2. Start Trip</button></form>{% else %}<button class="btn btn-outline-secondary btn-lg w-100" disabled>2. Start Trip - Waiting for Guest</button>{% endif %}
+     <form method="post" action="/bookings/{{ booking.booking_id }}/trip/end-driver"><input name="drop_end_km" type="number" min="0" step="0.1" class="form-control form-control-lg" placeholder="End Km" required><button class="btn btn-warning btn-lg w-100 mt-2">3. End Trip</button></form>
+     <a class="btn btn-outline-primary btn-lg" href="/bookings/{{ booking.booking_id }}/gps-trail?who=driver&from=mobile">4. Driver GPS Trail</a>
+     <a class="btn btn-outline-dark btn-lg" target="_blank" href="https://www.google.com/maps/dir/?api=1&origin={{ (booking.driver_gps or booking.pickup_address)|urlencode }}&destination={{ booking.drop_address|urlencode }}&travelmode=driving">5. Open Route</a>
+     <form method="post" action="/mobile/driver/{{ booking.booking_id }}/signature"><input type="hidden" name="signature_type" value="guest"><button class="btn btn-outline-primary btn-lg w-100">6. Guest Signature</button></form>
+     <form method="post" action="/mobile/driver/{{ booking.booking_id }}/signature"><input type="hidden" name="signature_type" value="driver"><button class="btn btn-outline-primary btn-lg w-100">7. Driver Signature</button></form>
+     <a class="btn btn-outline-danger btn-lg" href="tel:{{ rentago_contact }}">8. Call RentaGO</a>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

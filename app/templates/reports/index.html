@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Reports{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <h2 class="mb-0">Reports</h2>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-primary" href="/reports/vendor-compliance">Vendor Compliance</a>
+    <a class="btn btn-outline-primary" href="/reports/employee-productivity">Employee Productivity</a>
+    <a class="btn btn-outline-success"
+       href="/reports/export?type={{ cur_type }}&ci={{ cur_ci }}&from={{ cur_from }}&to={{ cur_to }}">
+      Export CSV</a>
+    <button class="btn btn-outline-secondary" onclick="window.print()">Print</button>
+  </div>
+</div>
+<p class="text-muted">Bookings report with trip &amp; invoice data
+(mirrors the workbook Reports sheet). Dates in DD-MM-YYYY format.</p>
+
+<form method="get" class="card mb-3"><div class="card-body">
+  <div class="row g-2 align-items-end">
+    <div class="col-md-3">
+      <label class="form-label">Booking Type</label>
+      <select name="type" class="form-select">
+        <option value="All Types" {% if cur_type == 'All Types' %}selected{% endif %}>All Types</option>
+        {% for t in types %}
+        <option value="{{ t }}" {% if cur_type == t %}selected{% endif %}>{{ t }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">Company / Guest</label>
+      <select name="ci" class="form-select">
+        <option value="All" {% if cur_ci == 'All' %}selected{% endif %}>All</option>
+        {% for c in cis %}
+        <option value="{{ c }}" {% if cur_ci == c %}selected{% endif %}>{{ c }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">Pickup From</label>
+      <input name="from" type="date" class="form-control" value="{{ cur_from|iso_date }}">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">Pickup To</label>
+      <input name="to" type="date" class="form-control" value="{{ cur_to|iso_date }}">
+    </div>
+    <div class="col-md-2 d-flex gap-2">
+      <button class="btn btn-primary flex-fill">Generate</button>
+      <a class="btn btn-outline-secondary" href="/reports">Clear</a>
+    </div>
+  </div>
+</div></form>
+
+<p><b>{{ rows|length }}</b> record{{ 's' if rows|length != 1 }} found{% if rows|length >= max_rows %}
+&nbsp;<span class="badge bg-warning text-dark">showing first {{ max_rows }} — narrow the filters</span>{% endif %}
+&nbsp;&nbsp;|&nbsp;&nbsp;Total invoiced: <b>Rs. {{ '%.2f'|format(total_amount) }}</b></p>
+
+<div class="table-responsive-cards">
+<table class="table table-striped table-hover table-sm reports-table">
+  <thead><tr><th>Bookings - Trips - Feedback</th><th>Invoice - Billing - Payment - Accounts</th><th>Status (Open / Closed)</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td><a href="/bookings/{{ r.booking_id }}"><strong>{{ r.booking_id }}</strong></a> | {{ r.booking_date }} | {{ r.booking_type }}<br>
+        Company: {{ r.company_name or '-' }} ({{ r.company_id or '-' }}) | Entity: {{ r.entity_name or '-' }}<br>
+        Guest: {{ r.guest_name_1 or '-' }} | Pickup: {{ r.pickup_address or '-' }} | Drop: {{ r.drop_address or '-' }}<br>
+        Cities: {{ r.pickup_city or '-' }} &rarr; {{ r.drop_city or '-' }} | Pickup: {{ r.pickup_date or '-' }} {{ r.pickup_time or '' }}<br>
+        Trip: {% if r.trip_id %}<a href="/trips/{{ r.trip_id }}">{{ r.trip_id }}</a>{% else %}-{% endif %} | {{ r.trip_status or '-' }} | Actual: {{ r.actual_kms or 0 }} km / {{ r.actual_hrs or 0 }} hrs<br>
+        Feedback: {{ r.guest_rating or '-' }}/5 | {{ r.guest_feedback or '-' }}<br>
+        Safety: {{ r.safety_status or '-' }} | Incident: {{ r.incident_priority or '-' }} | Ownership: {{ r.feedback_owner_group or '-' }}</td>
+      <td>Client Invoice: {% if r.client_invoice_id %}<a href="/invoices/{{ r.client_invoice_id }}">{{ r.client_invoice_id }}</a>{% else %}-{% endif %}<br>
+        Invoice Status: {{ r.client_invoice_status or '-' }} | Payment: {{ r.client_payment_status or '-' }}<br>
+        Client Original: Rs. {{ r.client_original_amount or 0 }} | Client Final: Rs. {{ r.client_final_amount or 0 }}<br>
+        Trip Expenses: Rs. {{ r.trip_expenses or 0 }} | Vendor Billing: {{ r.vendor_billing_status }}<br>
+        Client Paid: Rs. {{ r.client_paid or 0 }} | Vendor Paid: Rs. {{ r.vendor_paid or 0 }}<br>
+        Accounts: {{ r.account_status }}</td>
+      <td><strong>{{ r.status or '1-Pending' }}</strong><br>
+        Account: <span class="badge {% if r.account_status == 'Closed' %}bg-success{% else %}bg-warning text-dark{% endif %}">{{ r.account_status }}</span><br>
+        Feedback: {{ r.feedback_status or 'Open' }}<br>
+        Step 1: {{ r.booked_by_step1 or '-' }}<br>Step 2: {{ r.booked_by_step2 or '-' }}<br>Step 3: {{ r.booked_by_step3 or '-' }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="3" class="text-center text-danger">No records found for the selected filters.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

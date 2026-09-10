@@ -1,0 +1,4 @@
+{% extends "base.html" %}{% block title %}Vendor Invoice Review{% endblock %}{% block content %}
+<h2>Vendor → RentaGO Invoice Review</h2><p class="text-muted">Internal RentaGO view of vendor-raised bills. Client invoices are separate.</p>
+<div class="table-responsive"><table class="table table-sm table-striped"><thead><tr><th>Invoice</th><th>Vendor</th><th>Booking</th><th>Date</th><th>Total</th><th>Status</th><th>Notes</th></tr></thead><tbody>{% for i in invoices %}<tr><td>{{ i.number }}</td><td>{{ i.vendor }}</td><td>{{ i.booking_id }}</td><td>{{ i.date }}</td><td>Rs. {{ i.total }}</td><td>{{ i.status }}</td><td>{{ i.notes or '-' }}</td></tr>{% else %}<tr><td colspan="7">No vendor invoices found.</td></tr>{% endfor %}</tbody></table></div>
+{% endblock %}

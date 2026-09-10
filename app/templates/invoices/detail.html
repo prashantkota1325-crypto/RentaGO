@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+{% block title %}{{ inv.invoice_id }}{% endblock %}
+{% block content %}
+<a href="/invoices">&larr; Back to Invoices</a>
+<h2 class="mt-2">{{ inv.invoice_id }}</h2>
+<span class="badge bg-secondary">{{ inv.invoice_status }}</span>
+<span class="badge bg-info">{{ inv.payment_status }}</span>
+<p class="text-muted">Booking: <a href="/bookings/{{ inv.booking_id }}">{{ inv.booking_id }}</a></p>
+<div class="small"><strong class="text-dark">RentaGO Technologies Pvt Ltd</strong><br><span style="color:#999">(Smart Mobility Solutions)</span></div>
+<a class="btn btn-outline-primary btn-sm mt-2" href="/invoices/{{ inv.invoice_id }}/print">Print / Save PDF</a>
+
+{% set msg = request.query_params.get('msg', '') %}
+{% if msg %}
+<div class="alert alert-{{ 'success' if msg in ['final', 'payment-recorded'] else 'warning' }} alert-dismissible fade show" role="alert">
+  {% if msg == 'final' %}Final Invoice generated. Total: Rs. {{ inv.final_amount }} - Final Invoice Sent to Guest & Admin.{% elif msg == 'invalid' %}
+  Invalid amount entered. Please enter numeric values.{% elif msg == 'already-final' %}This invoice is already final.{% elif msg == 'payment-recorded' %}
+  Payment recorded against this invoice.{% elif msg == 'not-allowed' %}
+  Your role is not allowed to perform this action.{% else %}{{ msg }}{% endif %}
+  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+<div class="row mt-3">
+  <div class="col-md-6">
+    <h5>Guest & Trip</h5>
+    <dl class="row">
+      <dt class="col-sm-4">Guest</dt><dd class="col-sm-8">{{ inv.guest_name }}</dd>
+      <dt class="col-sm-4">Company</dt><dd class="col-sm-8">{{ inv.company_name or '-' }}</dd>
+      <dt class="col-sm-4">Pickup</dt><dd class="col-sm-8">{{ inv.pickup_address }} ({{ inv.pickup_date or '' }} {{ inv.pickup_time or '' }})</dd>
+      <dt class="col-sm-4">Drop</dt><dd class="col-sm-8">{{ inv.drop_address }}</dd>
+      <dt class="col-sm-4">Vehicle</dt><dd class="col-sm-8">{{ inv.vehicle_type or '-' }}</dd>
+      <dt class="col-sm-4">Package</dt><dd class="col-sm-8">{{ inv.package_type or '-' }}</dd>
+    </dl>
+  </div>
+  <div class="col-md-6">
+    <h5>Deadlines</h5>
+    <dl class="row">
+      <dt class="col-sm-4">Trip End</dt><dd class="col-sm-8">{{ inv.trip_end_date }}</dd>
+       <dt class="col-sm-4">Trip Expense Deadline</dt><dd class="col-sm-8">{{ inv.vendor_expense_deadline }}</dd>
+       {% if inv.invoice_status != 'Final Invoice' and inv.payment_status != 'Final Invoice Sent' %}<dt class="col-sm-4">Final Bill</dt><dd class="col-sm-8">{{ inv.final_bill_deadline }}</dd>{% endif %}
+    </dl>
+  </div>
+</div>
+
+<div class="row mt-3">
+  <div class="col-md-6">
+    <h5>Amounts</h5>
+    <dl class="row">
+      <dt class="col-sm-4">Original Amount</dt><dd class="col-sm-8">{{ inv.original_amount }}</dd>
+      <dt class="col-sm-4">Cancellation Charges</dt><dd class="col-sm-8">{{ inv.cancellation_charges }}</dd>
+      <dt class="col-sm-4">Refund Amount</dt><dd class="col-sm-8">{{ inv.refund_amount }}</dd>
+      <dt class="col-sm-4">Final Amount</dt><dd class="col-sm-8">{{ inv.final_amount }}</dd>
+    </dl>
+  </div>
+  <div class="col-md-6">
+     <h5>Trip Expenses</h5>
+    <dl class="row">
+      <dt class="col-sm-4">Toll</dt><dd class="col-sm-8">{{ inv.toll }}</dd>
+      <dt class="col-sm-4">Parking</dt><dd class="col-sm-8">{{ inv.parking }}</dd>
+      <dt class="col-sm-4">Extra Kms</dt><dd class="col-sm-8">{{ inv.extra_kms }}</dd>
+      <dt class="col-sm-4">Extra Hours</dt><dd class="col-sm-8">{{ inv.extra_hours }}</dd>
+      <dt class="col-sm-4">Other Expenses</dt><dd class="col-sm-8">{{ inv.other_expenses }}</dd>
+       <dt class="col-sm-4">Total Trip Expenses</dt><dd class="col-sm-8">{{ inv.total_vendor_expenses }}</dd>
+    </dl>
+  </div>
+</div>
+
+<div class="mt-3">
+  <h6>Cancellation</h6>
+  {% if inv.cancellation_reason %}
+    <p class="text-muted">{{ inv.cancellation_reason }} ({{ inv.cancellation_date or '-' }})<br>Policy: {{ inv.cancellation_policy or '-' }}</p>
+  {% else %}
+    <p class="text-muted">No cancellation.</p>
+  {% endif %}
+</div>
+
+{% if can_submit %}
+<div class="card mt-4">
+   <div class="card-header">Submit Trip Expenses (generates Final Invoice)</div>
+  <div class="card-body">
+    <form method="post" action="/invoices/{{ inv.invoice_id }}/submit-expenses"
+          onsubmit="return confirm('Generate the FINAL INVOICE for {{ inv.invoice_id }} with these expenses?');">
+      <div class="row g-2">
+        <div class="col-md-2"><label class="form-label">Toll (Rs.)</label><input type="number" step="0.01" name="toll" value="0" class="form-control" required></div>
+        <div class="col-md-2"><label class="form-label">Parking (Rs.)</label><input type="number" step="0.01" name="parking" value="0" class="form-control" required></div>
+        <div class="col-md-2"><label class="form-label">Extra Kms (Rs.)</label><input type="number" step="0.01" name="extra_kms" value="0" class="form-control" required></div>
+        <div class="col-md-2"><label class="form-label">Extra Hours (Rs.)</label><input type="number" step="0.01" name="extra_hours" value="0" class="form-control" required></div>
+        <div class="col-md-2"><label class="form-label">Other Exp (Rs.)</label><input type="number" step="0.01" name="other_expenses" value="0" class="form-control" required></div>
+        <div class="col-md-2 d-flex align-items-end"><button class="btn btn-success w-100">Submit &amp; Finalize</button></div>
+      </div>
+    </form>
+  </div>
+</div>
+<div class="card mt-3">
+  <div class="card-header">Trip Expense Documents</div>
+  <div class="card-body">
+    <form method="post" action="/invoices/{{ inv.invoice_id }}/expense-attachments" enctype="multipart/form-data" class="d-flex gap-2">
+      <input type="file" name="attachment" class="form-control" accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.xls,.xlsx" required>
+      <button class="btn btn-outline-primary text-nowrap">Upload Document</button>
+    </form>
+    <div class="form-text">Attach receipts or supporting documents before finalization (maximum 10 MB each).</div>
+    {% for a in attachments %}<div class="small mt-2"><a href="/invoices/{{ inv.invoice_id }}/expense-attachments/{{ a.attachment_id }}">{{ a.file_name }}</a> - {{ a.uploaded_dt }}</div>{% else %}<div class="small text-muted mt-2">No attachments uploaded.</div>{% endfor %}
+  </div>
+</div>
+{% else %}
+<div class="alert alert-success mt-4">Final Invoice sent on {{ inv.final_invoice_sent_on or '-' }}.</div>
+{% endif %}
+
+<div class="card mt-4">
+  <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <span>Payments against this invoice</span>
+    <a class="btn btn-sm btn-outline-secondary" href="/payments">All Payments</a>
+  </div>
+  <div class="card-body">
+    {% if payments %}
+    <table class="table table-sm table-striped">
+      <thead><tr><th>Payment ID</th><th>Type</th><th>Date</th><th>Amount</th><th>Method</th><th>Status</th></tr></thead>
+      <tbody>
+        {% for p in payments %}
+        <tr>
+          <td>{{ p.payment_id }}</td><td>{{ p.pay_type }}</td><td>{{ p.pay_date }}</td>
+          <td>Rs. {{ p.amount }}</td><td>{{ p.pay_method }}</td><td>{{ p.pay_status }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="text-muted mb-2">No payments recorded yet.</p>
+    {% endif %}
+
+    {% if can_pay %}
+    <form method="post" action="/payments/record" class="row g-2 align-items-end"
+          onsubmit="return confirm('Record this payment against {{ inv.invoice_id }}?');">
+      <input type="hidden" name="ref_id" value="{{ inv.invoice_id }}">
+      <input type="hidden" name="counterparty" value="{{ inv.company_name or inv.guest_name or '' }}">
+      <div class="col-md-3">
+        <label class="form-label">Type</label>
+        <select name="pay_type" class="form-select">
+          <option>Receipt from Customer</option>
+          <option>Refund to Customer</option>
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Amount (Rs.)</label>
+        <input type="number" step="0.01" min="0.01" name="amount" class="form-control"
+               value="{{ inv.final_amount or inv.original_amount or 0 }}" required>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Date</label>
+        <input name="pay_date" class="form-control" placeholder="DD-MM-YYYY">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Method</label>
+        <select name="pay_method" class="form-select">
+          <option>UPI</option><option>NEFT</option><option>RTGS</option><option>IMPS</option>
+          <option>Cheque</option><option>Cash</option><option>Card</option><option>Adjustment</option>
+        </select>
+      </div>
+      <div class="col-md-3">
+        <button class="btn btn-primary w-100">Record Payment</button>
+      </div>
+    </form>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

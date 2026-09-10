@@ -1,0 +1,9 @@
+# Copy to config.yml after creating a named tunnel with `cloudflared tunnel login`.
+# Replace the tunnel ID and hostname with the values from your Cloudflare account.
+tunnel: <TUNNEL_UUID>
+credentials-file: C:\Users\<WINDOWS_USER>\.cloudflared\<TUNNEL_UUID>.json
+
+ingress:
+  - hostname: app.<YOUR_DOMAIN>
+    service: http://127.0.0.1:8000
+  - service: http_status:404

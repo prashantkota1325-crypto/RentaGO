@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Register{% endblock %}
+{% block content %}
+<div class="row justify-content-center mt-4">
+  <div class="col-md-5">
+    <div class="card shadow">
+      <div class="card-body">
+        <h4 class="card-title text-center mb-1">RentaGO Registration</h4>
+        <p class="text-muted text-center small mb-4">Your account must be approved by a Super Admin before you can sign in.</p>
+
+        {% if msg == "submitted" %}
+        <div class="alert alert-success">Registration submitted. Please wait for a Super Admin to approve your account.</div>
+        {% elif msg == "exists" %}
+        <div class="alert alert-danger">That User ID is already taken. Please choose another.</div>
+        {% elif msg == "password-mismatch" %}
+        <div class="alert alert-danger">Passwords do not match.</div>
+        {% elif msg == "password-short" %}
+        <div class="alert alert-danger">Password must be at least 6 characters.</div>
+        {% elif msg == "missing" %}
+        <div class="alert alert-danger">Please complete all required fields.</div>
+        {% endif %}
+
+        <form method="post" action="/auth/register">
+          <div class="mb-2">
+            <label class="form-label">User ID (login username)</label>
+            <input name="user_id" class="form-control" pattern="[A-Za-z0-9]+" minlength="1" title="Use letters and numbers only" required>
+          </div>
+          <div class="mb-2">
+            <label class="form-label">Full Name</label>
+            <input name="name" class="form-control" required>
+          </div>
+          <div class="mb-2">
+            <label class="form-label">Email</label>
+            <input name="email" type="email" class="form-control" required>
+          </div>
+          <div class="row">
+          <div class="col-6 mb-2">
+            {% from "_phone_field.html" import phone_field %}
+            {{ phone_field("mobile", label="Mobile", default_country="IN", placeholder="10-digit number") }}
+          </div>
+            <div class="col-6 mb-2">
+              <label class="form-label">Company</label>
+              <input name="company_name" class="form-control">
+            </div>
+          </div>
+          <div class="mb-2">
+            <label class="form-label">Requested Role</label>
+            <select name="role" class="form-select">
+              {% for r in roles %}
+              <option value="{{ r }}">{{ r }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="mb-2">
+            <label class="form-label">Password</label>
+            <input name="password" type="password" class="form-control" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Confirm Password</label>
+            <input name="confirm_password" type="password" class="form-control" required>
+          </div>
+          <div class="d-grid">
+            <button class="btn btn-primary" type="submit">Register</button>
+          </div>
+        </form>
+        <div class="text-center mt-3">
+          <a href="/auth/login">Already registered? Sign in</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,21 @@
+{% extends "base.html" %}{% block title %}SLA Simulator{% endblock %}{% block content %}{% include "sla/_toolbar.html" %}
+<h2>SLA / Business Rule Simulator</h2>
+<p class="text-muted">Test the currently published definition and business rules without creating an SLA instance.</p>
+<form method="get" class="card mb-3"><div class="card-body row g-3">
+<div class="col-md-4"><label class="form-label">Event Name</label><input name="event_name" class="form-control" value="{{ event_name }}"></div>
+<div class="col-md-4"><label class="form-label">Department</label><input name="department" class="form-control" value="{{ department }}"></div>
+<div class="col-md-2"><label class="form-label">Default Priority</label><input name="priority" class="form-control" value="{{ priority }}"></div>
+<div class="col-12"><label class="form-label">Context JSON</label><textarea name="context_json" class="form-control" rows="4">{{ context_json }}</textarea><div class="form-text">Example: {"policy_category":"Booking","booking_type":"Corporate","booking_value":60000}</div></div>
+<div class="col-12"><button class="btn btn-primary">Simulate</button></div>
+</div></form>
+{% if result %}<div class="card"><div class="card-body">
+{% if result.error %}<div class="alert alert-danger">{{ result.error }}</div>{% else %}
+<h5>Simulation Result</h5>
+<p>Definition: <strong>{{ result.definition[1] if result.definition else 'None' }}</strong><br>
+Effective Priority: <strong>{{ result.effective_priority }}</strong><br>
+Effective Duration: <strong>{{ result.effective_minutes or '-' }} minutes</strong></p>
+<h6>Matched Rules</h6><pre>{{ result.rules.rules }}</pre>
+<p class="mb-0"><strong>Precedence explanation:</strong> {{ result.rules.explanation or 'No matching rules' }}</p>
+{% endif %}
+</div></div>{% endif %}
+{% endblock %}

@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Users{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center">
+  <h2>User Management</h2>
+  <a class="btn btn-primary" href="/auth/users/new">+ New User</a>
+</div>
+
+{% set msg = request.query_params.get('msg', '') %}
+{% if msg %}
+<div class="alert alert-{{ 'success' if msg in ['created', 'updated'] else 'warning' }} alert-dismissible fade show" role="alert">
+  {% if msg == 'created' %}User created.{% elif msg == 'updated' %}User updated.{% elif msg == 'not-found' %}
+  User not found.{% else %}{{ msg }}{% endif %}
+  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+<div class="table-responsive-cards">
+<table class="table table-striped table-hover">
+  <thead><tr>
+    <th>User ID</th><th>Name</th><th>Email</th><th>Mobile</th>
+    <th>Company</th><th>Role</th><th>Status</th><th></th>
+  </tr></thead>
+  <tbody>
+  {% for u in users %}
+    <tr>
+      <td>{{ u.user_id }}</td>
+      <td>{{ u.name }}</td>
+      <td>{{ u.email }}</td>
+      <td>{{ u.mobile or '-' }}</td>
+      <td>{{ u.company_name or '-' }}</td>
+      <td>{{ u.role }}</td>
+      <td>
+        {% if u.status == 'Active' %}<span class="badge bg-success">{{ u.status }}</span>
+        {% elif u.status == 'Pending' %}<span class="badge bg-warning text-dark">{{ u.status }}</span>
+        {% else %}<span class="badge bg-secondary">{{ u.status or '-' }}</span>{% endif %}
+      </td>
+      <td><a class="btn btn-sm btn-outline-primary"
+             href="/auth/users/{{ u.user_id }}/edit">Edit</a></td>
+    </tr>
+  {% else %}
+    <tr><td colspan="8" class="text-center text-muted">No users found.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="text-muted small">Edit a user to change their details, role, status or
+reset their password. New registrations can be approved from the
+<a href="/auth/pending-users">Approvals</a> page.</p>
+{% endblock %}

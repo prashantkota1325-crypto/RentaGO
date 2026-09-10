@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<h2>Dashboard KPIs</h2>
+<div class="row mt-4">
+  <div class="col-md-2"><div class="card text-center"><div class="card-body"><h3>{{ kpi.total }}</h3><p>Total Bookings</p></div></div></div>
+  <div class="col-md-2"><div class="card text-center"><div class="card-body"><h3>{{ kpi.today }}</h3><p>Today</p></div></div></div>
+  <div class="col-md-2"><div class="card text-center"><div class="card-body"><h3>{{ kpi.pending }}</h3><p>Pending</p></div></div></div>
+  <div class="col-md-2"><div class="card text-center"><div class="card-body"><h3>{{ kpi.confirmed }}</h3><p>Confirmed</p></div></div></div>
+  <div class="col-md-2"><div class="card text-center"><div class="card-body"><h3>{{ kpi.cancelled }}</h3><p>Cancelled</p></div></div></div>
+</div>
+<div class="row mt-2">
+  <div class="col-md-2"><div class="card text-center"><div class="card-body"><h3>Rs. {{ '%.0f'|format(kpi.revenue) }}</h3><p>Invoiced Revenue</p></div></div></div>
+  <div class="col-md-2"><div class="card text-center"><div class="card-body"><h3>{{ kpi.active_trips }}</h3><p>Active Trips</p></div></div></div>
+</div>
+{% endblock %}

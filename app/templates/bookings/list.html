@@ -1,0 +1,269 @@
+{% extends "base.html" %}
+{% block title %}Bookings{% endblock %}
+{% block content %}
+{% from "_phone_field.html" import phone_field %}
+{% from "_time_select.html" import time_select %}
+<h2>Bookings</h2>
+{% if sla_alerts %}
+<div class="alert alert-danger">
+  <strong>SLA Alerts ({{ sla_alerts|length }})</strong>
+  <ul class="mb-0">
+    {% for a in sla_alerts[:6] %}
+    <li><a href="/bookings/{{ a.booking_id }}">{{ a.booking_id }}</a> &mdash; {{ a.message }}</li>
+    {% endfor %}
+    {% if sla_alerts|length > 6 %}<li>...and {{ sla_alerts|length - 6 }} more (see <a href="/dashboards/ops">Ops Dashboard</a>)</li>{% endif %}
+  </ul>
+</div>
+{% endif %}
+
+<!-- Search filters: company, entity, any guest name, pickup/drop address,
+     pickup/drop city, pickup date & time, vehicle type, status (AND-ed) -->
+<div class="card mb-3">
+  <div class="card-header py-2"><strong>Search Bookings</strong></div>
+  <div class="card-body">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-md-3"><label class="form-label small mb-0">Company</label>
+        <input name="f_company_name" value="{{ filters[0].value }}" class="form-control form-control-sm"></div>
+      <div class="col-md-3"><label class="form-label small mb-0">Entity Name</label>
+        <input name="f_entity_name" value="{{ filters[1].value }}" class="form-control form-control-sm"></div>
+      <div class="col-md-3"><label class="form-label small mb-0">Guest Name (any of 1&ndash;5)</label>
+        <input name="f_guest_name" value="{{ filters[2].value }}" class="form-control form-control-sm"></div>
+      <div class="col-md-3"><label class="form-label small mb-0">Status</label>
+        <input name="status" value="{{ status_filter }}" class="form-control form-control-sm" placeholder="e.g. 1-Pending"></div>
+      <div class="col-md-3"><label class="form-label small mb-0">Pickup Address</label>
+        <input name="f_pickup_address" value="{{ filters[3].value }}" class="form-control form-control-sm"></div>
+      <div class="col-md-3"><label class="form-label small mb-0">Drop Address</label>
+        <input name="f_drop_address" value="{{ filters[4].value }}" class="form-control form-control-sm"></div>
+      <div class="col-md-2"><label class="form-label small mb-0">Pickup City</label>
+        <input name="f_pickup_city" value="{{ filters[5].value }}" class="form-control form-control-sm"></div>
+      <div class="col-md-2"><label class="form-label small mb-0">Drop City</label>
+        <input name="f_drop_city" value="{{ filters[6].value }}" class="form-control form-control-sm"></div>
+      <div class="col-md-2"><label class="form-label small mb-0">Pickup Date</label>
+        <input name="f_pickup_date" type="date" value="{{ filters[7].value|iso_date }}" class="form-control form-control-sm"></div>
+      <div class="col-md-1"><label class="form-label small mb-0">Time</label>
+        {{ time_select('f_pickup_time', filters[8].value) }}</div>
+      <div class="col-md-2"><label class="form-label small mb-0">Vehicle Type</label>
+        <input name="f_vehicle_type" value="{{ filters[9].value }}" class="form-control form-control-sm"></div>
+      <div class="col-12 d-flex gap-2 mt-1">
+        <button class="btn btn-sm btn-primary">Apply Filters</button>
+        <a class="btn btn-sm btn-outline-secondary" href="/bookings">Clear</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="toolbar">
+  <span class="text-muted small">Showing {{ bookings|length }} of {{ total_count }} bookings (latest 10 per page)</span>
+  <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#newBooking">+ New Booking</button>
+</div>
+<div class="table-responsive-cards">
+<table class="table table-striped table-hover">
+  <thead><tr>
+    <th colspan="2">Step 1 - Booking</th><th colspan="2">Steps 2 &amp; 3 - Allocation</th><th>Status &amp; Ownership</th>
+  </tr></thead>
+  <tbody>
+  {% for b in bookings %}
+    <tr>
+      <td colspan="2"><a href="/bookings/{{ b.booking_id }}"><strong>{{ b.booking_id }}</strong></a><br>
+        {{ b.booking_date }} | {{ b.booking_type }}<br>{{ b.company_name or '-' }} | {{ b.entity_name or '-' }}<br>
+        Guest: {{ b.guest_name or '-' }} | Contact: {{ b.guest_contact }}<br>Pickup: {{ b.pickup_address or '-' }}<br>Drop: {{ b.drop_address or '-' }}<br>
+        Cities: {{ b.pickup_city or '-' }} &rarr; {{ b.drop_city or '-' }}<br>Pickup: {{ b.pickup_date }} {{ b.pickup_time or '' }}<br>
+        <span class="small text-muted">Booked By / {{ b.booked_by_step1 }}</span></td>
+      <td colspan="2">{% if show_vendor_name %}Vendor: {{ b.vendor_name or '-' }}<br>{% endif %}Driver: {{ b.driver_name or '-' }}<br>
+        Driver Contact: {{ b.driver_contact or '-' }}<br>Vehicle: {{ b.vehicle_no or '-' }}<br>
+        <span class="small">Step 2: {{ b.step2_state }} | Booked By / {{ b.booked_by_step2 }}</span><br>
+        <span class="small">Step 3: {{ b.step3_state }} | Confirmed By / {{ b.booked_by_step3 }}</span></td>
+      <td><div>Step 1: <span class="badge bg-secondary">{{ b.step1_state }}</span></div>
+        <div>Step 2: <span class="badge bg-secondary">{{ b.step2_state }}</span></div>
+        <div>Step 3: <span class="badge bg-secondary">{{ b.step3_state }}</span></div>
+        <div class="mt-1"><span class="badge {{ b.status_class }}">{{ b.status_display }}</span></div></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<nav class="mt-3" aria-label="Bookings pages"><ul class="pagination">
+  {% if page > 1 %}<li class="page-item"><a class="page-link" href="/bookings?{{ base_query }}&page={{ page - 1 }}">Previous</a></li>{% endif %}
+  <li class="page-item active"><span class="page-link">Page {{ page }} of {{ total_pages }}</span></li>
+  {% if page < total_pages %}<li class="page-item"><a class="page-link" href="/bookings?{{ base_query }}&page={{ page + 1 }}">Next</a></li>{% endif %}
+</ul></nav>
+
+<!-- New Booking modal (Step 1) - full BookingForm parity -->
+<div class="modal fade" id="newBooking" tabindex="-1">
+  <div class="modal-dialog modal-xl">
+    <form method="post" action="/bookings/create" class="modal-content booking-form-modal">
+      <div class="modal-header"><h5 class="modal-title">New Booking (Step 1)</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body row g-3">
+        <h6 class="booking-section-title mt-0">1. Booking &amp; Guest Details</h6>
+        <div class="col-md-4"><label>Booking Type*</label><select name="booking_type" class="form-select" required>
+          <option>Corporate</option><option>Corporate Event</option><option>Employee Transport</option>
+          <option>Individual</option><option>Individual Event</option><option>Dummy</option></select></div>
+        <div class="col-md-4"><label>Company</label><input name="company_name" data-company-search class="form-control" placeholder="Search companies... (fills Id + Entity)"></div>
+        <input type="hidden" name="company_id" value="">
+        <div class="col-md-4"><label>Company Entity / Legal Entity</label><select name="entity_name" class="form-select"><option value="">Select Company first</option></select></div>
+        <div class="col-md-3"><label>Reference Code</label><input name="reference_code" class="form-control"></div>
+        <div class="col-md-3"><label>Reference No.</label><input name="ref_no" class="form-control"></div>
+
+        <div class="col-md-4"><label>Guest Name 1</label><input name="guest_name" data-guest-search class="form-control" placeholder="Search employees + individuals..."></div>
+        <div class="col-md-4"><label>Emp/Guest ID</label><input name="emp_guest_id" class="form-control"></div>
+        <div class="col-md-4"><label>Guest Email</label><input name="guest_email" class="form-control"></div>
+        {{ phone_field("guest_contact", label="Guest Contact", default_country="IN") }}
+        <div class="col-md-4"><label>Guest Name 2</label><input name="guest_name_2" class="form-control"></div>
+        <div class="col-md-4"><label>Guest Name 3</label><input name="guest_name_3" class="form-control"></div>
+        <div class="col-md-4"><label>Guest Name 4</label><input name="guest_name_4" class="form-control"></div>
+        <div class="col-md-4"><label>Guest Name 5</label><input name="guest_name_5" class="form-control"></div>
+        <div class="col-md-4"><label>Booking SPOC</label><input name="admin_name" class="form-control"></div>
+        <div class="col-md-4"><label>Booking SPOC Email</label><input name="admin_email" class="form-control"></div>
+        {{ phone_field("admin_contact", label="Booking SPOC Contact", default_country="IN") }}
+        <div class="col-md-4"><label>Request Received Via</label>
+          <select name="email_received" class="form-select">
+            <option value=""></option><option>Email</option><option>WhatsApp</option><option>SMS</option><option>Call</option>
+          </select></div>
+        <div class="col-md-4"><label>Request Received Time</label>
+          <input name="request_received_time" type="datetime-local" class="form-control"></div>
+        <div class="col-md-4"><label>Confirmation Sent Via</label>
+          <select name="email_sent" class="form-select">
+            <option value=""></option><option>Email</option><option>WhatsApp</option><option>SMS</option><option>Call</option>
+          </select></div>
+
+        <h6 class="booking-section-title mt-2">2. Pickup Details &mdash; Country, State, City, Address (GPS)</h6>
+        <div class="col-md-4"><label>Country</label>
+          <select name="pickup_country" class="form-select">
+            <option selected>India</option><option>United States</option><option>United Kingdom</option>
+            <option>United Arab Emirates</option><option>Singapore</option><option>Malaysia</option>
+            <option>Australia</option><option>Canada</option><option>Germany</option><option>France</option>
+            <option>Other</option>
+          </select></div>
+        <div class="col-md-4"><label>State (auto-set from City)</label>
+          <select name="pickup_state" class="form-select" data-value="{{ '' }}"></select></div>
+        <div class="col-md-4"><label>City</label><input name="pickup_city" class="form-control" list="cityList" placeholder="Type a city - state auto-selects"></div>
+        <datalist id="cityList"></datalist>
+        <div class="col-md-12" id="pickup_gps_box">
+          <label>Pickup Address*</label>
+          <div class="input-group">
+           <input name="pickup_address" class="form-control" required placeholder="Location address - then press Search GPS">
+            <button type="button" class="btn btn-outline-secondary" data-gps-btn="pickup">Search GPS</button>
+          </div>
+          <div id="pickup_gps_results" class="list-group mt-1"></div>
+           <div class="mt-1">
+            <a id="pickup_gps_badge" class="badge bg-success text-decoration-none" style="display:none" target="_blank" href="#"></a>
+           <span class="form-text">Search sequence: Location Address &rarr; City &rarr; State &rarr; Country (OpenStreetMap).</span>
+           </div>
+           <div class="row g-2 mt-1">
+             <div class="col-md-6"><label class="form-text">Manually Entered Address</label>
+               <input name="pickup_manual_address" class="form-control form-control-sm" readonly></div>
+             <div class="col-md-6"><label class="form-text">GPS Maps Link</label>
+               <a id="pickup_gps_map_link" class="form-control form-control-sm text-truncate" style="display:none" target="_blank"></a></div>
+           </div>
+           <input type="hidden" name="pickup_gps" value="">
+           <input type="hidden" name="pickup_gps_link" value="">
+           <input type="hidden" name="pickup_lat" value="">
+           <input type="hidden" name="pickup_lon" value="">
+        </div>
+        <div class="col-md-2"><label>Pickup Date</label><input name="pickup_date" type="date" class="form-control"></div>
+        <div class="col-md-2"><label>Pickup Time</label>{{ time_select('pickup_time') }}</div>
+        <div class="col-12"><label class="form-text">Additional Pickup Points 1&ndash;5</label>
+          <div class="row g-2">
+             {% for i in range(1,6) %}<div class="col"><div class="input-group"><input name="pickup_{{ i }}" class="form-control" placeholder="Pickup {{ i }}"><button type="button" class="btn btn-outline-secondary" data-stop-gps="pickup_{{ i }}">GPS</button></div><input type="hidden" name="pickup_{{ i }}_gps"><small class="text-success" data-stop-result="pickup_{{ i }}"></small></div>{% endfor %}
+          </div></div>
+        <div class="col-md-4"><label>No. of Guests</label><input name="no_of_guests" type="number" min="1" class="form-control"></div>
+        <div class="col-md-4"><label>Pickups</label>
+          <select name="pickups_sm" class="form-select">
+            <option value=""></option><option>Single</option><option>Multiple</option>
+          </select></div>
+        <div class="col-md-4"><label>Drops</label>
+          <select name="drops_sm" class="form-select">
+            <option value=""></option><option>Single</option><option>Multiple</option>
+          </select></div>
+
+        <h6 class="booking-section-title mt-2">3. Drop Details &mdash; Country, State, City, Address (GPS)</h6>
+        <div class="col-md-4"><label>Country</label>
+          <select name="drop_country" class="form-select">
+            <option selected>India</option><option>United States</option><option>United Kingdom</option>
+            <option>United Arab Emirates</option><option>Singapore</option><option>Malaysia</option>
+            <option>Australia</option><option>Canada</option><option>Germany</option><option>France</option>
+            <option>Other</option>
+          </select></div>
+        <div class="col-md-4"><label>State (auto-set from City)</label>
+          <select name="drop_state" class="form-select" data-value="{{ '' }}"></select></div>
+        <div class="col-md-4"><label>City</label><input name="drop_city" class="form-control" list="cityList" placeholder="Type a city - state auto-selects"></div>
+        <div class="col-md-12" id="drop_gps_box">
+          <label>Drop Address*</label>
+          <div class="input-group">
+            <input name="drop_address" class="form-control" required placeholder="Location address - then press Search GPS">
+            <button type="button" class="btn btn-outline-secondary" data-gps-btn="drop">Search GPS</button>
+          </div>
+          <div id="drop_gps_results" class="list-group mt-1"></div>
+           <div class="mt-1">
+            <a id="drop_gps_badge" class="badge bg-success text-decoration-none" style="display:none" target="_blank" href="#"></a>
+            <span class="form-text">GPS coordinates are saved with the booking and shown on its detail page.</span>
+           </div>
+           <div class="row g-2 mt-1">
+             <div class="col-md-6"><label class="form-text">Manually Entered Address</label>
+               <input name="drop_manual_address" class="form-control form-control-sm" readonly></div>
+             <div class="col-md-6"><label class="form-text">GPS Maps Link</label>
+               <a id="drop_gps_map_link" class="form-control form-control-sm text-truncate" style="display:none" target="_blank"></a></div>
+           </div>
+           <input type="hidden" name="drop_gps" value="">
+           <input type="hidden" name="drop_gps_link" value="">
+           <input type="hidden" name="drop_lat" value="">
+           <input type="hidden" name="drop_lon" value="">
+        </div>
+        <div class="col-md-2"><label>Drop Date</label><input name="drop_date" type="date" class="form-control"></div>
+        <div class="col-md-2"><label>Drop Time</label>{{ time_select('drop_time') }}</div>
+        <div class="col-12"><label class="form-text">Additional Drop Points 1&ndash;5</label>
+          <div class="row g-2">
+             {% for i in range(1,6) %}<div class="col"><div class="input-group"><input name="drop_{{ i }}" class="form-control" placeholder="Drop {{ i }}"><button type="button" class="btn btn-outline-secondary" data-stop-gps="drop_{{ i }}">GPS</button></div><input type="hidden" name="drop_{{ i }}_gps"><small class="text-success" data-stop-result="drop_{{ i }}"></small></div>{% endfor %}
+          </div></div>
+
+        <h6 class="booking-section-title mt-2">4. Vehicle &amp; Flight Details</h6>
+        <div class="col-md-4"><label>Vehicle Type</label><input name="vehicle_type" class="form-control" list="vehicleTypes">
+          <datalist id="vehicleTypes">
+            <option value="Hatchback"><option value="Sedan"><option value="SUV"><option value="Innova">
+            <option value="Luxury"><option value="MiniCoach">
+          </datalist></div>
+        <div class="col-md-4"><label>Package Type</label>
+          <select name="package_type_sel" class="form-select">
+            <option value=""></option>
+            <option>Per Day</option>
+            <option>Multiple Days</option>
+            <option>4 Hrs / 40 Kms</option>
+            <option>8 Hrs / 80 Kms</option>
+            <option>12 Hrs / 120 Kms</option>
+            <option>Local Full Day</option>
+            <option>Local Drop</option>
+            <option>Airport Transfer</option>
+            <option>Outstation</option>
+            <option>Event</option>
+            <option value="Other">Other (specify)</option>
+          </select>
+          <input type="hidden" name="package_type" value="">
+          <div id="package_other_row" style="display:none" class="mt-1">
+            <input id="package_type_other" class="form-control" placeholder="Custom package type">
+          </div></div>
+        <div class="col-md-4"><label>Area Code</label><input name="area_code" class="form-control"></div>
+        <div class="col-md-12"><label>Flight Details (airport pickup/drop)</label>
+          <input name="flight_details" class="form-control" placeholder="e.g. AI-442, arriving 21-Aug 14:30 at Pune Airport T1"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary" type="submit">Submit Step 1</button>
+      </div>
+    </form>
+  </div>
+</div>
+<script src="/static/js/booking-form.js?v=2"></script>
+<!-- Footer notice shown on all booking pages -->
+<div class="mt-4 card bg-light">
+  <div class="card-header bg-white">
+    <strong>RentaGO</strong>
+  </div>
+  <div class="card-body small text-muted">
+    <p class="mb-1"><strong>User Name</strong> - Booked By / Booking Confirmed By / Tracked By</p>
+    <p class="mb-1">24 / 7 Customer Care No. 9923402200</p>
+    <p class="mb-0">Email-ID - info@eliteservicess.in</p>
+  </div>
+</div>
+
+{% endblock %}

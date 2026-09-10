@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Customer 360{% endblock %}
+{% block content %}
+<h2>Customer 360</h2>
+
+<form method="get" class="row g-2 mt-3 mb-3">
+  <div class="col-md-5">
+      <select name="company" class="form-select" onchange="this.form.submit()">
+      {% for c in companies %}
+      <option value="{{ c }}" {% if c == selected %}selected{% endif %}>{{ c }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2"><button class="btn btn-primary w-100">View</button></div>
+</form>
+
+{% if info %}
+<div class="row">
+  <div class="col-md-4">
+    <div class="card mb-4">
+      <div class="card-header"><strong>{{ info.name }}</strong></div>
+      <div class="card-body">
+        <dl class="row mb-0">
+           <dt class="col-sm-5">Company ID</dt><dd class="col-sm-7">{{ info.company_id or '-' }}</dd>
+           <dt class="col-sm-5">Industry</dt><dd class="col-sm-7">{{ info.industry or '-' }}</dd>
+          <dt class="col-sm-5">City</dt><dd class="col-sm-7">{{ info.city or '-' }}</dd>
+          <dt class="col-sm-5">State</dt><dd class="col-sm-7">{{ info.state or '-' }}</dd>
+          <dt class="col-sm-5">Credit Limit</dt><dd class="col-sm-7">{{ info.credit_limit or '-' }}</dd>
+          <dt class="col-sm-5">Credit Days</dt><dd class="col-sm-7">{{ info.credit_days or '-' }}</dd>
+          <dt class="col-sm-5">Account Mgr</dt><dd class="col-sm-7">{{ info.account_manager or '-' }}</dd>
+          <dt class="col-sm-5">Status</dt><dd class="col-sm-7">{{ info.status or '-' }}</dd>
+        </dl>
+      </div>
+    </div>
+    <div class="card mb-4">
+      <div class="card-header"><strong>Booking Stats</strong></div>
+      <div class="card-body">
+        <div class="row text-center">
+          <div class="col-3"><h5>{{ stats.total }}</h5><small class="text-muted">Total</small></div>
+          <div class="col-3"><h5 class="text-warning">{{ stats.pending }}</h5><small class="text-muted">Pending</small></div>
+          <div class="col-3"><h5 class="text-success">{{ stats.confirmed }}</h5><small class="text-muted">Confirmed</small></div>
+          <div class="col-3"><h5 class="text-danger">{{ stats.cancelled }}</h5><small class="text-muted">Cancelled</small></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-8">
+    <div class="card mb-4">
+      <div class="card-header"><strong>Recent Bookings</strong></div>
+      <div class="card-body table-responsive-cards">
+        <table class="table table-sm table-striped">
+          <thead><tr><th>Booking</th><th>Guest</th><th>Pickup Date</th><th>Status</th></tr></thead>
+          <tbody>
+          {% for r in recent %}
+            <tr>
+              <td><a href="/bookings/{{ r.booking_id }}">{{ r.booking_id }}</a></td>
+              <td>{{ r.guest }}</td><td>{{ r.pickup_date }}</td>
+              <td><span class="badge {% if r.status == '1-Pending' %}bg-warning text-dark{% elif r.status == '2-Confirmed' %}bg-success{% else %}bg-danger{% endif %}">{{ r.status }}</span></td>
+            </tr>
+          {% else %}
+            <tr><td colspan="4" class="text-muted">No bookings.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><strong>Recent Invoices</strong></div>
+      <div class="card-body table-responsive-cards">
+        <table class="table table-sm table-striped">
+           <thead><tr><th>Invoice</th><th>Booking</th><th>Trip ID</th><th>Status</th><th>Payment</th><th>Final Amount</th></tr></thead>
+          <tbody>
+          {% for i in invoices %}
+            <tr>
+               <td><a href="/invoices/{{ i.invoice_id }}">{{ i.invoice_id }}</a></td>
+               <td><a href="/bookings/{{ i.booking_id }}">{{ i.booking_id }}</a></td>
+               <td>{% if i.trip_id %}<a href="/trips/{{ i.trip_id }}">{{ i.trip_id }}</a>{% else %}-{% endif %}</td>
+              <td>{{ i.invoice_status }}</td>
+              <td>{{ i.payment_status }}</td>
+              <td>Rs. {{ i.final_amount or 0 }}</td>
+            </tr>
+          {% else %}
+             <tr><td colspan="6" class="text-muted">No invoices.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% else %}
+<div class="alert alert-info mt-3">Select a company to view its 360&deg; profile.</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,195 @@
+{% extends "base.html" %}
+{% from "_phone_field.html" import phone_field %}
+{% from "_time_select.html" import time_select %}
+{% block title %}Modify {{ b.booking_id }}{% endblock %}
+{% block content %}
+<a href="/bookings/{{ b.booking_id }}">&larr; Back to {{ b.booking_id }}</a>
+<h2 class="mt-2">Modify Booking Details &mdash; {{ b.booking_id }}</h2>
+<p class="text-muted">Step 1 correction form. Vendor / driver allocation, status and
+  timestamps are not changed here (use the Modify buttons on the booking page).</p>
+
+{% set msg = request.query_params.get('msg', '') %}
+{% if msg == 'not-editable' %}
+<div class="alert alert-warning">This booking is cancelled or completed and can no longer be modified.</div>
+{% endif %}
+
+<form method="post" action="/bookings/{{ b.booking_id }}/edit">
+  <div class="card mb-3"><div class="card-body row g-3">
+    <h6 class="mt-2 text-muted">Booking</h6>
+    <div class="col-md-4"><label>Booking Type*</label>
+      <select name="booking_type" class="form-select" required>
+        {% for t in ['Corporate','Corporate Event','Employee Transport','Individual','Individual Event','Dummy'] %}
+        <option value="{{ t }}"{% if b.booking_type == t %} selected{% endif %}>{{ t }}</option>
+        {% endfor %}
+      </select></div>
+    <div class="col-md-4"><label>Company</label>
+      <input name="company_name" data-company-search class="form-control" value="{{ b.company_name or '' }}"></div>
+    <input type="hidden" name="company_id" value="{{ b.company_id or '' }}">
+    <div class="col-md-4"><label>Entity Name</label><input name="entity_name" class="form-control" value="{{ b.entity_name or '' }}"></div>
+    <div class="col-md-3"><label>Reference Code</label><input name="reference_code" class="form-control" value="{{ b.reference_code or '' }}"></div>
+    <div class="col-md-3"><label>Reference No.</label><input name="ref_no" class="form-control" value="{{ b.ref_no or '' }}"></div>
+
+    <h6 class="mt-2 text-muted">Guest Details</h6>
+    <div class="col-md-4"><label>Guest Name 1</label><input name="guest_name" data-guest-search class="form-control" value="{{ b.guest_name_1 or '' }}"></div>
+    <div class="col-md-4"><label>Guest Name 2</label><input name="guest_name_2" class="form-control" value="{{ b.guest_name_2 or '' }}"></div>
+    <div class="col-md-4"><label>Guest Name 3</label><input name="guest_name_3" class="form-control" value="{{ b.guest_name_3 or '' }}"></div>
+    <div class="col-md-4"><label>Guest Name 4</label><input name="guest_name_4" class="form-control" value="{{ b.guest_name_4 or '' }}"></div>
+    <div class="col-md-4"><label>Guest Name 5</label><input name="guest_name_5" class="form-control" value="{{ b.guest_name_5 or '' }}"></div>
+    <div class="col-md-4"><label>Emp/Guest ID</label><input name="emp_guest_id" class="form-control" value="{{ b.emp_guest_id or '' }}"></div>
+    <div class="col-md-4"><label>Guest Email</label><input name="guest_email" class="form-control" value="{{ b.guest_email or '' }}"></div>
+    {{ phone_field("guest_contact", label="Guest Contact", default_country="IN", number=guest_contact_num) }}
+    <div class="col-md-4"><label>Booking SPOC</label><input name="admin_name" class="form-control" value="{{ b.admin_name or '' }}"></div>
+    <div class="col-md-4"><label>Booking SPOC Email</label><input name="admin_email" class="form-control" value="{{ b.admin_email or '' }}"></div>
+    {{ phone_field("admin_contact", label="Booking SPOC Contact", default_country="IN", number=admin_contact_num) }}
+    <div class="col-md-4"><label>Request Received Via</label>
+      <select name="email_received" class="form-select">
+        {% for o in ['', 'Email', 'WhatsApp', 'SMS', 'Call'] %}
+        <option value="{{ o }}"{% if (b.email_received or '') == o %} selected{% endif %}>{{ o or 'None' }}</option>
+        {% endfor %}
+      </select></div>
+    <div class="col-md-4"><label>Request Received Time</label>
+      <input name="request_received_time" type="datetime-local" class="form-control" value="{{ b.request_received_time|iso_dt }}"></div>
+    <div class="col-md-4"><label>Confirmation Sent Via</label>
+      <select name="email_sent" class="form-select">
+        {% for o in ['', 'Email', 'WhatsApp', 'SMS', 'Call'] %}
+        <option value="{{ o }}"{% if (b.email_sent or '') == o %} selected{% endif %}>{{ o or 'None' }}</option>
+        {% endfor %}
+      </select></div>
+
+    <h6 class="mt-2 text-muted">Pickup &mdash; Country, State, City, Address (GPS)</h6>
+    <div class="col-md-4"><label>Country</label>
+      <select name="pickup_country" class="form-select">
+        {% for c in ['India','United States','United Kingdom','United Arab Emirates','Singapore','Malaysia','Australia','Canada','Germany','France','Other'] %}
+        <option value="{{ c }}"{% if c == 'India' %} selected{% endif %}>{{ c }}</option>
+        {% endfor %}
+      </select></div>
+    <div class="col-md-4"><label>State (auto-set from City)</label>
+      <select name="pickup_state" class="form-select" data-value="{{ b.pickup_state or '' }}"></select></div>
+    <div class="col-md-4"><label>City</label>
+      <input name="pickup_city" class="form-control" list="cityList" value="{{ b.pickup_city or '' }}"></div>
+    <datalist id="cityList"></datalist>
+    <div class="col-md-12" id="pickup_gps_box">
+      <label>Pickup Address*</label>
+      <div class="input-group">
+        <input name="pickup_address" class="form-control" required value="{{ b.pickup_address or '' }}">
+        <button type="button" class="btn btn-outline-secondary" data-gps-btn="pickup">Search GPS</button>
+      </div>
+      <div id="pickup_gps_results" class="list-group mt-1"></div>
+       <div class="mt-1">
+        <a id="pickup_gps_badge" class="badge bg-success text-decoration-none"
+           {% if b.pickup_gps %}style="display:inline-block" href="https://www.google.com/maps?q={{ b.pickup_gps }}"{% else %}style="display:none" href="#"{% endif %}
+           target="_blank">{% if b.pickup_gps %}GPS: {{ b.pickup_gps }}{% endif %}</a>
+       </div>
+       <div class="row g-2 mt-1">
+         <div class="col-md-6"><label class="form-text">Manually Entered Address</label>
+           <input name="pickup_manual_address" class="form-control form-control-sm" readonly value="{{ b.pickup_manual_address or b.pickup_address or '' }}"></div>
+         <div class="col-md-6"><label class="form-text">GPS Maps Link</label>
+           {% if b.pickup_gps_link %}<a id="pickup_gps_map_link" class="form-control form-control-sm text-truncate" target="_blank" href="{{ b.pickup_gps_link }}">{{ b.pickup_gps_link }}</a>{% else %}<a id="pickup_gps_map_link" class="form-control form-control-sm text-truncate" style="display:none" target="_blank"></a>{% endif %}</div>
+       </div>
+       <input type="hidden" name="pickup_gps" value="{{ b.pickup_gps or '' }}">
+       <input type="hidden" name="pickup_gps_link" value="{{ b.pickup_gps_link or '' }}">
+    </div>
+    <div class="col-md-2"><label>Pickup Date</label><input name="pickup_date" type="date" class="form-control" value="{{ b.pickup_date|iso_date }}"></div>
+    <div class="col-md-2"><label>Pickup Time</label>{{ time_select('pickup_time', b.pickup_time or '') }}</div>
+    <div class="col-12"><label class="form-text">Additional Pickup Points 1&ndash;5</label>
+      <div class="row g-2">
+             {% for i in range(1,6) %}<div class="col"><div class="input-group"><input name="pickup_{{ i }}" class="form-control" value="{{ b['pickup_' ~ i] or '' }}" placeholder="Pickup {{ i }}"><button type="button" class="btn btn-outline-secondary" data-stop-gps="pickup_{{ i }}">GPS</button></div><input type="hidden" name="pickup_{{ i }}_gps"><small class="text-success" data-stop-result="pickup_{{ i }}"></small></div>{% endfor %}
+      </div></div>
+    <div class="col-md-4"><label>No. of Guests</label><input name="no_of_guests" type="number" min="1" class="form-control" value="{{ b.no_of_guests or '' }}"></div>
+    <div class="col-md-4"><label>Pickups</label>
+      <select name="pickups_sm" class="form-select">
+        {% for o in ['', 'Single', 'Multiple'] %}
+        <option value="{{ o }}"{% if (b.pickups_sm or '') == o %} selected{% endif %}>{{ o or 'None' }}</option>
+        {% endfor %}
+      </select></div>
+    <div class="col-md-4"><label>Drops</label>
+      <select name="drops_sm" class="form-select">
+        {% for o in ['', 'Single', 'Multiple'] %}
+        <option value="{{ o }}"{% if (b.drops_sm or '') == o %} selected{% endif %}>{{ o or 'None' }}</option>
+        {% endfor %}
+      </select></div>
+
+    <h6 class="mt-2 text-muted">Drop &mdash; Country, State, City, Address (GPS)</h6>
+    <div class="col-md-4"><label>Country</label>
+      <select name="drop_country" class="form-select">
+        {% for c in ['India','United States','United Kingdom','United Arab Emirates','Singapore','Malaysia','Australia','Canada','Germany','France','Other'] %}
+        <option value="{{ c }}"{% if c == 'India' %} selected{% endif %}>{{ c }}</option>
+        {% endfor %}
+      </select></div>
+    <div class="col-md-4"><label>State (auto-set from City)</label>
+      <select name="drop_state" class="form-select" data-value="{{ b.drop_state or '' }}"></select></div>
+    <div class="col-md-4"><label>City</label>
+      <input name="drop_city" class="form-control" list="cityList" value="{{ b.drop_city or '' }}"></div>
+    <div class="col-md-12" id="drop_gps_box">
+      <label>Drop Address*</label>
+      <div class="input-group">
+        <input name="drop_address" class="form-control" required value="{{ b.drop_address or '' }}">
+        <button type="button" class="btn btn-outline-secondary" data-gps-btn="drop">Search GPS</button>
+      </div>
+      <div id="drop_gps_results" class="list-group mt-1"></div>
+       <div class="mt-1">
+        <a id="drop_gps_badge" class="badge bg-success text-decoration-none"
+           {% if b.drop_gps %}style="display:inline-block" href="https://www.google.com/maps?q={{ b.drop_gps }}"{% else %}style="display:none" href="#"{% endif %}
+           target="_blank">{% if b.drop_gps %}GPS: {{ b.drop_gps }}{% endif %}</a>
+       </div>
+       <div class="row g-2 mt-1">
+         <div class="col-md-6"><label class="form-text">Manually Entered Address</label>
+           <input name="drop_manual_address" class="form-control form-control-sm" readonly value="{{ b.drop_manual_address or b.drop_address or '' }}"></div>
+         <div class="col-md-6"><label class="form-text">GPS Maps Link</label>
+           {% if b.drop_gps_link %}<a id="drop_gps_map_link" class="form-control form-control-sm text-truncate" target="_blank" href="{{ b.drop_gps_link }}">{{ b.drop_gps_link }}</a>{% else %}<a id="drop_gps_map_link" class="form-control form-control-sm text-truncate" style="display:none" target="_blank"></a>{% endif %}</div>
+       </div>
+       <input type="hidden" name="drop_gps" value="{{ b.drop_gps or '' }}">
+       <input type="hidden" name="drop_gps_link" value="{{ b.drop_gps_link or '' }}">
+    </div>
+    <div class="col-md-2"><label>Drop Date</label><input name="drop_date" type="date" class="form-control" value="{{ b.drop_date|iso_date }}"></div>
+    <div class="col-md-2"><label>Drop Time</label>{{ time_select('drop_time', b.drop_time or '') }}</div>
+    <div class="col-12"><label class="form-text">Additional Drop Points 1&ndash;5</label>
+      <div class="row g-2">
+             {% for i in range(1,6) %}<div class="col"><div class="input-group"><input name="drop_{{ i }}" class="form-control" value="{{ b['drop_' ~ i] or '' }}" placeholder="Drop {{ i }}"><button type="button" class="btn btn-outline-secondary" data-stop-gps="drop_{{ i }}">GPS</button></div><input type="hidden" name="drop_{{ i }}_gps"><small class="text-success" data-stop-result="drop_{{ i }}"></small></div>{% endfor %}
+      </div></div>
+
+    <h6 class="mt-2 text-muted">Vehicle &amp; Flight</h6>
+    {% set pkg = b.package_type or '' %}
+    {% set std = ['Per Day','Multiple Days','4 Hrs / 40 Kms','8 Hrs / 80 Kms','12 Hrs / 120 Kms','Local Full Day','Local Drop','Airport Transfer','Outstation','Event'] %}
+    <div class="col-md-4"><label>Vehicle Type</label><input name="vehicle_type" class="form-control" list="vehicleTypes" value="{{ b.vehicle_type or '' }}">
+      <datalist id="vehicleTypes">
+        <option value="Hatchback"><option value="Sedan"><option value="SUV"><option value="Innova">
+        <option value="Luxury"><option value="MiniCoach">
+      </datalist></div>
+    <div class="col-md-4"><label>Package Type</label>
+      <select name="package_type_sel" class="form-select">
+        <option value=""></option>
+        {% for o in std %}
+        <option value="{{ o }}"{% if pkg == o %} selected{% endif %}>{{ o }}</option>
+        {% endfor %}
+        <option value="Other"{% if pkg and pkg not in std %} selected{% endif %}>Other (specify)</option>
+      </select>
+      <input type="hidden" name="package_type" value="{{ pkg }}">
+      <div id="package_other_row" class="mt-1" {% if not pkg or pkg in std %}style="display:none"{% endif %}>
+        <input id="package_type_other" class="form-control" placeholder="Custom package type"
+               value="{{ pkg if pkg and pkg not in std else '' }}">
+      </div></div>
+    <div class="col-md-4"><label>Area Code</label><input name="area_code" class="form-control" value="{{ b.area_code or '' }}"></div>
+    <div class="col-md-12"><label>Flight Details (airport pickup/drop)</label>
+      <input name="flight_details" class="form-control" value="{{ b.flight_details or '' }}"></div>
+  </div></div>
+
+  <div class="d-flex gap-2 mb-4">
+    <button class="btn btn-primary" type="submit">Save Modifications</button>
+    <a class="btn btn-outline-secondary" href="/bookings/{{ b.booking_id }}">Cancel</a>
+  </div>
+</form>
+<script src="/static/js/booking-form.js?v=2"></script>
+<!-- Footer notice shown on all booking pages -->
+<div class="mt-4 card bg-light">
+  <div class="card-header bg-white">
+    <strong>RentaGO</strong>
+  </div>
+  <div class="card-body small text-muted">
+    <p class="mb-1"><strong>User Name</strong> - Booked By / Booking Confirmed By / Tracked By</p>
+    <p class="mb-1">24 / 7 Customer Care No. 9923402200</p>
+    <p class="mb-0">Email-ID - info@eliteservicess.in</p>
+  </div>
+</div>
+
+{% endblock %}

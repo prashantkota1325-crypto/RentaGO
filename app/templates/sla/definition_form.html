@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}SLA Definition{% endblock %}
+{% block content %}
+{% include "sla/_toolbar.html" %}
+<a href="/sla/definitions">&larr; SLA Definitions</a><h2 class="mt-2">New SLA Definition Version</h2>
+<form method="post" action="/sla/definitions/save" class="card"><div class="card-body row g-3">
+<input type="hidden" name="source_id" value="{{ source_id }}">
+<div class="col-md-6"><label class="form-label">SLA Name</label><input name="sla_name" class="form-control" value="{{ record.sla_name or '' }}" required></div>
+<div class="col-md-3"><label class="form-label">Department</label><input name="department" class="form-control" value="{{ record.department or 'Operations' }}" required></div>
+<div class="col-md-3"><label class="form-label">Process</label><input name="process_name" class="form-control" value="{{ record.process_name or '' }}"></div>
+<div class="col-md-4"><label class="form-label">Event</label><input name="event_name" class="form-control" value="{{ record.event_name or 'BOOKING_CREATED' }}" required></div>
+<div class="col-md-2"><label class="form-label">Priority</label><select name="priority" class="form-select">{% for p in priorities %}<option {% if record.priority == p %}selected{% endif %}>{{ p }}</option>{% endfor %}</select></div>
+<div class="col-md-3"><label class="form-label">Duration Minutes</label><input name="duration_minutes" type="number" min="1" class="form-control" value="{{ record.duration_minutes or 15 }}" required></div>
+<div class="col-md-3"><label class="form-label">Warning %</label><input name="warning_percent" type="number" min="1" max="100" class="form-control" value="{{ record.warning_percent or 75 }}" required></div>
+<div class="col-12"><label class="form-label">Change Reason</label><textarea name="change_reason" class="form-control">{{ record.change_reason or '' }}</textarea></div>
+</div><div class="card-footer"><button class="btn btn-primary">Save Draft</button></div></form>
+{% endblock %}

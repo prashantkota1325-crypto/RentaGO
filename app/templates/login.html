@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Login{% endblock %}
+{% block content %}
+<div class="row justify-content-center mt-5">
+  <div class="col-md-4">
+    <div class="card shadow">
+      <div class="card-body">
+        <div class="text-center mb-4">
+          <a href="/static/img/rentago-logo.svg" target="_blank" title="Open / download the RentaGO logo">
+            <img src="/static/img/rentago-logo.svg" alt="RentaGO" style="max-width:260px; height:auto">
+          </a>
+          <div class="text-muted small mt-1">Car Rental Management System</div>
+        </div>
+        {% set msg = request.query_params.get('msg', '') %}
+        {% if msg %}
+        <div class="alert alert-{{ 'success' if msg == 'logged-out' else 'danger' }} py-2">
+          {% if msg == 'unknown-user' %}Unknown user.{% elif msg == 'invalid-password' %}
+          Invalid password.{% elif msg == 'pending' %}
+          Your account is pending approval. Please wait for a Super Admin to approve it.{% elif msg == 'rejected' %}
+          Your registration was rejected. Please contact the Super Admin.{% elif msg == 'logged-out' %}
+          You have been signed out.{% elif msg == 'password-reset' %}
+          Password reset successfully. Sign in with your new password.{% else %}{{ msg }}{% endif %}
+        </div>
+        {% endif %}
+<form method="post" action="{% if portal == 'corporate' %}/auth/corporate-login{% elif portal == 'vendor' %}/auth/vendor-login{% else %}/auth/login{% endif %}">
+          <input type="hidden" name="portal" value="{{ portal or 'internal' }}">
+          <div class="mb-3">
+            <label class="form-label">User ID</label>
+            <input name="user_id" class="form-control" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Password</label>
+            <input name="password" type="password" class="form-control" required>
+          </div>
+          <div class="d-grid">
+            <button class="btn btn-primary" type="submit">Sign In</button>
+          </div>
+        </form>
+        <div class="text-center mt-3">
+          Forgot password? <a href="/auth/reset">Use a reset OTP</a><br>
+          New user? <a href="/auth/register">Create an account</a><br>
+          <a href="/auth/login">RentaGO Login</a> |
+          <a href="/auth/corporate-login">Corporate Login</a> |
+          <a href="/auth/vendor-login">Vendor Login</a> |
+          <a href="/auth/guest-login">Guest Login</a> |
+          <a href="/auth/driver-login">Driver Login</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

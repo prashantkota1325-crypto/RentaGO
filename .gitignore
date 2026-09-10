@@ -1,0 +1,36 @@
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials*.json
+
+# Runtime and diagnostic output
+*.log
+cookies.txt
+
+# Python generated files
+__pycache__/
+*.py[cod]
+
+# Local test artifacts
+test_login.py
+test_login_detail.py
+trace_login.py
+debug_user.py
+debug_vaults.py
+check_users.py
+all_users.py
+
+# Database/data exports - do not commit populated data
+import/import_data.sql
+
+# Temporary/local test script
+test_fix.py
+
+# Database/data exports - do not commit populated data
+import/import_data.sql
+
+# Temporary/local test script
+test_fix.py

@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}{{ t.trip_id }}{% endblock %}
+{% block content %}
+<a href="/trips">&larr; Back to Trips</a>
+<h2 class="mt-2">{{ t.trip_id }}</h2>
+<span class="badge bg-secondary">{{ t.trip_status }}</span>
+<p class="text-muted">Booking: <a href="/bookings/{{ t.booking_id }}">{{ t.booking_id }}</a></p>
+
+<div class="row mt-3">
+  <div class="col-md-6">
+    <h5>Guest & Route</h5>
+    <dl class="row">
+      <dt class="col-sm-4">Guest</dt><dd class="col-sm-8">{{ t.guest_name }}</dd>
+      <dt class="col-sm-4">Pickup Date</dt><dd class="col-sm-8">{{ t.pickup_date }}</dd>
+      <dt class="col-sm-4">Pickup</dt><dd class="col-sm-8">{{ t.pickup_address }}</dd>
+      <dt class="col-sm-4">Drop</dt><dd class="col-sm-8">{{ t.drop_address }}</dd>
+      <dt class="col-sm-4">Maps</dt><dd class="col-sm-8">
+        {% if t.google_maps_link %}<a href="{{ t.google_maps_link }}" target="_blank">Open in Maps</a>{% else %}-{% endif %}
+      </dd>
+    </dl>
+  </div>
+  <div class="col-md-6">
+    <h5>Driver & Vehicle</h5>
+    <dl class="row">
+      <dt class="col-sm-4">Driver</dt><dd class="col-sm-8">{{ t.driver_name or '-' }}</dd>
+      <dt class="col-sm-4">Mobile</dt><dd class="col-sm-8">{{ t.driver_mobile or '-' }}</dd>
+      <dt class="col-sm-4">Vehicle</dt><dd class="col-sm-8">{{ t.vehicle_no or '-' }}</dd>
+      <dt class="col-sm-4">Reporting Time</dt><dd class="col-sm-8">{{ t.driver_reporting_time or '-' }}</dd>
+    </dl>
+  </div>
+</div>
+
+<div class="row mt-3">
+  <div class="col-md-6">
+    <h5>Timings & Distance</h5>
+    <dl class="row">
+      <dt class="col-sm-4">Pickup Start</dt><dd class="col-sm-8">{{ t.pickup_start_time or '-' }}</dd>
+      <dt class="col-sm-4">Actual Trip Start</dt><dd class="col-sm-8">{{ t.actual_start_dt or '-' }}</dd>
+      <dt class="col-sm-4">Pickup Start KM</dt><dd class="col-sm-8">{{ t.pickup_start_km or '-' }}</dd>
+      <dt class="col-sm-4">Drop End</dt><dd class="col-sm-8">{{ t.drop_end_time or '-' }}</dd>
+      <dt class="col-sm-4">Actual Trip End</dt><dd class="col-sm-8">{{ t.actual_end_dt or '-' }}</dd>
+      <dt class="col-sm-4">Drop End KM</dt><dd class="col-sm-8">{{ t.drop_end_km or '-' }}</dd>
+      <dt class="col-sm-4">Actual KM</dt><dd class="col-sm-8">{{ t.actual_kms if t.actual_kms is not none else '-' }}</dd>
+      <dt class="col-sm-4">Actual Hrs</dt><dd class="col-sm-8">{{ t.actual_hrs if t.actual_hrs is not none else '-' }}</dd>
+      <dt class="col-sm-4">Garage KM</dt><dd class="col-sm-8">{{ t.garage_kms or '-' }}</dd>
+    </dl>
+  </div>
+  <div class="col-md-6">
+    <h5>Extras & Charges</h5>
+    <dl class="row">
+      <dt class="col-sm-4">Extra KM</dt><dd class="col-sm-8">{{ t.extra_kms or '-' }}</dd>
+      <dt class="col-sm-4">Extra Hrs</dt><dd class="col-sm-8">{{ t.extra_hrs or '-' }}</dd>
+      <dt class="col-sm-4">Outstation KM</dt><dd class="col-sm-8">{{ t.outstation_extra_kms or '-' }}</dd>
+      <dt class="col-sm-4">Outstation Hrs</dt><dd class="col-sm-8">{{ t.outstation_extra_hrs or '-' }}</dd>
+      <dt class="col-sm-4">Driver Allowance</dt><dd class="col-sm-8">{{ t.drivers_allowance or '-' }}</dd>
+      <dt class="col-sm-4">Night Halt</dt><dd class="col-sm-8">{{ t.night_halt or '-' }}</dd>
+      <dt class="col-sm-4">Toll / Parking</dt><dd class="col-sm-8">{{ t.toll or '-' }} / {{ t.parking or '-' }}</dd>
+    </dl>
+  </div>
+</div>
+
+<div class="mt-3">
+  <h6>Trip Remarks</h6>
+  <p class="text-muted">{{ t.trip_remarks or 'No remarks.' }}</p>
+  {% if t.customer_signature %}<span class="badge bg-light text-dark border">Signature: {{ t.customer_signature }}</span>{% endif %}
+  {% if t.feedback_form %}<span class="badge bg-light text-dark border">Feedback: {{ t.feedback_form }}</span>{% endif %}
+  {% if t.guest_rating is not none %}<div class="alert alert-success mt-3"><strong>Guest Rating:</strong> {{ t.guest_rating }}/5{% if t.guest_feedback %}<br>{{ t.guest_feedback }}{% endif %}</div>{% endif %}
+</div>
+{% endblock %}

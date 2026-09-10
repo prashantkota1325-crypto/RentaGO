@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Feedback Follow-up{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <h2>Feedback Follow-up &amp; Rectification</h2>
+</div>
+<p class="text-muted">Review Guest feedback, assign ownership, record corrective action, and close resolved issues.</p>
+{% if request.query_params.get('msg') == 'updated' %}<div class="alert alert-success">Feedback follow-up updated.</div>{% endif %}
+<form method="get" class="row g-2 mb-3">
+  <div class="col-md-3"><select name="status" class="form-select"><option value="">All statuses</option>{% for s in statuses %}<option value="{{ s }}" {% if status_filter == s %}selected{% endif %}>{{ s }}</option>{% endfor %}</select></div>
+  <div class="col-md-2"><select name="owner_group" class="form-select"><option value="">All ownership</option><option {% if owner_group_filter == 'RentaGO Team' %}selected{% endif %}>RentaGO Team</option><option {% if owner_group_filter == 'Vendor' %}selected{% endif %}>Vendor</option><option {% if owner_group_filter == 'Driver' %}selected{% endif %}>Driver</option></select></div>
+  <div class="col-md-2"><select name="safety" class="form-select"><option value="">All safety</option><option {% if safety_filter == 'Yes' %}selected{% endif %}>Yes</option><option {% if safety_filter == 'Some concern' %}selected{% endif %}>Some concern</option><option {% if safety_filter == 'Safety issue' %}selected{% endif %}>Safety issue</option></select></div>
+  <div class="col-md-5"><input name="q" value="{{ query }}" class="form-control" placeholder="Search booking, guest, company"></div>
+  <div class="col-md-2"><button class="btn btn-primary">Filter</button></div>
+</form>
+{% for f in feedback %}
+<div class="card mb-3">
+  <div class="card-header d-flex justify-content-between"><strong>{{ f.trip_id }} / {{ f.booking_id }}</strong><span class="badge bg-secondary">{{ f.status }}</span></div>
+  <div class="card-body">
+    <div class="row"><div class="col-md-6"><strong>Guest:</strong> {{ f.guest or '-' }}<br><strong>Company:</strong> {{ f.company or '-' }}<br><strong>Vendor:</strong> {{ f.vendor or '-' }}<br><strong>Driver:</strong> {{ f.driver or '-' }}<br><strong>Ownership:</strong> {{ f.owner_group or 'RentaGO Team' }}</div><div class="col-md-6"><strong>Rating:</strong> {{ f.rating }}/5<br><strong>Feedback:</strong><br>{{ f.comments or '-' }}<br><strong>Went well:</strong> {{ f.went_well or '-' }}<br><strong>Improvements:</strong> {{ f.improvements or '-' }}</div></div>
+    {% if f.safety_status and f.safety_status != 'Yes' %}<div class="alert {% if f.priority == 'P0' %}alert-danger{% else %}alert-warning{% endif %} mt-3"><strong>{{ f.priority or 'P1' }} Safety Incident:</strong> {{ f.safety_status }}<br>{{ f.safety_issues or '-' }}<br><span class="small">Incident status: {{ f.incident_status or 'Open' }}</span></div>{% endif %}
+    <hr>
+    <form method="post" action="/feedback/{{ f.trip_id }}/update" class="row g-2">
+      <div class="col-md-2"><label class="form-label small">Status</label><select name="status" class="form-select form-select-sm">{% for s in statuses %}<option {% if f.status == s %}selected{% endif %}>{{ s }}</option>{% endfor %}</select></div>
+      <div class="col-md-2"><label class="form-label small">Owner</label><input name="owner" class="form-control form-control-sm" value="{{ f.owner or '' }}"></div>
+      <div class="col-md-2"><label class="form-label small">Ownership Group</label><select name="owner_group" class="form-select form-select-sm"><option {% if f.owner_group == 'RentaGO Team' or not f.owner_group %}selected{% endif %}>RentaGO Team</option><option {% if f.owner_group == 'Vendor' %}selected{% endif %}>Vendor</option><option {% if f.owner_group == 'Driver' %}selected{% endif %}>Driver</option></select></div>
+      <div class="col-md-4"><label class="form-label small">Rectification / Action</label><input name="action" class="form-control form-control-sm" value="{{ f.action or '' }}"></div>
+      <div class="col-md-2"><label class="form-label small">Follow-up Date</label><input name="followup_date" type="date" class="form-control form-control-sm" value="{{ f.followup|iso_date }}"></div>
+      <div class="col-md-2 d-flex align-items-end"><button class="btn btn-sm btn-success w-100">Save Follow-up</button></div>
+    </form>
+  </div>
+</div>
+{% else %}<div class="alert alert-info">No Guest feedback found.</div>{% endfor %}
+{% endblock %}

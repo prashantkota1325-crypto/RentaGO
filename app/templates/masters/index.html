@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Masters{% endblock %}
+{% block content %}
+<h2>Master Data &amp; Sheets</h2>
+<div class="row mt-4">
+  {% for c in cards %}
+  <div class="col-md-4 mb-3">
+    <a href="/masters/{{ c.key }}" class="text-decoration-none">
+      <div class="card text-center h-100"><div class="card-body">
+        <h5>{{ c.title }}</h5>
+        <p class="text-muted mb-0">
+          {% if c.readonly %}View only (log){% elif c.level == 'F' %}View &amp; edit{% else %}View only{% endif %}
+        </p>
+      </div></div>
+    </a>
+  </div>
+  {% endfor %}
+  {% if matrix_access %}
+  <div class="col-md-4 mb-3">
+    <a href="/masters/roles-matrix/grid" class="text-decoration-none">
+      <div class="card text-center h-100 border-primary"><div class="card-body">
+        <h5>Roles Matrix</h5>
+        <p class="text-muted mb-0">Edit access per role &amp; sheet</p>
+      </div></div>
+    </a>
+  </div>
+  {% endif %}
+  {% if not cards and not matrix_access %}
+  <div class="alert alert-info">Your role has no access to any master data sheets.</div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}New Policy{% endblock %}
+{% block content %}
+<a href="/policies">&larr; Policies</a><h2 class="mt-2">New Policy Draft</h2>
+<form method="post" action="/policies/save" class="card"><div class="card-body row g-3"><input type="hidden" name="source_policy_id" value="{{ source_id }}">
+<div class="col-md-6"><label class="form-label">Policy Name</label><input name="policy_name" class="form-control" value="{{ record.policy_name or '' }}" required></div>
+<div class="col-md-3"><label class="form-label">Category</label><select name="category" class="form-select">{% for c in categories %}<option {% if record.category == c %}selected{% endif %}>{{ c }}</option>{% endfor %}</select></div>
+<div class="col-md-3"><label class="form-label">Department</label><input name="department" class="form-control" value="{{ record.department or '' }}"></div>
+<div class="col-md-6"><label class="form-label">Conditions JSON</label><textarea name="conditions" class="form-control" rows="5" placeholder='{"booking_type":"Corporate"}'>{{ record.conditions or '{}' }}</textarea></div>
+<div class="col-md-6"><label class="form-label">Actions JSON</label><textarea name="actions" class="form-control" rows="5" placeholder='{"duration_minutes":30}'>{{ record.actions or '{}' }}</textarea></div>
+<div class="col-12"><label class="form-label">Change Reason</label><textarea name="change_reason" class="form-control"></textarea></div>
+</div><div class="card-footer"><button class="btn btn-primary">Save Draft</button></div></form>
+{% endblock %}

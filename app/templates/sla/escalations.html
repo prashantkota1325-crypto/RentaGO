@@ -1,0 +1,15 @@
+{% extends "base.html" %}{% block title %}SLA Escalation Rules{% endblock %}{% block content %}{% include "sla/_toolbar.html" %}
+<div class="d-flex justify-content-between align-items-center"><h2>SLA Escalation Rules</h2><span class="text-muted">Draft rules do not affect live SLA processing.</span></div>
+<form method="post" class="card my-3"><div class="card-body row g-2">
+  <div class="col-md-2"><label class="form-label">Event</label><input name="event_name" class="form-control" placeholder="SLA_BREACHED" required></div>
+  <div class="col-md-2"><label class="form-label">Department</label><input name="department" class="form-control" placeholder="Any department"></div>
+  <div class="col-md-1"><label class="form-label">Priority</label><input name="priority" class="form-control" placeholder="P0"></div>
+  <div class="col-md-1"><label class="form-label">Level</label><input name="escalation_level" type="number" min="1" max="9" class="form-control" required></div>
+  <div class="col-md-2"><label class="form-label">Trigger %</label><input name="trigger_percent" type="number" min="0" step="0.01" class="form-control" placeholder="100" required></div>
+  <div class="col-md-2"><label class="form-label">Channels</label><input name="channels" class="form-control" value="email"></div>
+  <div class="col-md-2"><label class="form-label">Recipient roles</label><input name="recipient_roles" class="form-control" placeholder="Operations,Manager"></div>
+  <div class="col-12"><button class="btn btn-primary">Add Draft Rule</button></div>
+</div></form>
+<div class="table-responsive"><table class="table table-sm table-striped"><thead><tr><th>Event</th><th>Department</th><th>Priority</th><th>Level</th><th>Trigger</th><th>Channels</th><th>Recipients</th><th>Status</th><th></th></tr></thead><tbody>
+{% for r in rows %}<tr><td>{{ r.event }}</td><td>{{ r.department or 'Any' }}</td><td>{{ r.priority or 'Any' }}</td><td>{{ r.level }}</td><td>{{ r.trigger }}%</td><td>{{ r.channels or '-' }}</td><td>{{ r.roles or '-' }}</td><td>{{ r.status }}</td><td>{% if r.status == 'Draft' %}<form method="post" action="/sla/escalations/{{ r.rule_id }}/publish"><button class="btn btn-sm btn-success">Publish</button></form>{% endif %}</td></tr>{% else %}<tr><td colspan="9">No escalation rules configured.</td></tr>{% endfor %}
+</tbody></table></div>{% endblock %}

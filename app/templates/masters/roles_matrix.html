@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Roles Matrix{% endblock %}
+{% block content %}
+<a href="/masters">&larr; Back to Masters</a>
+<h2 class="mt-2">Roles Matrix</h2>
+<p class="text-muted">Access per role and sheet: <b>F</b> = full (view &amp; edit),
+<b>V</b> = view only, <b>&mdash;</b> = no access. Save one sheet row at a time;
+changes apply immediately (cached for up to 5 minutes for other users).</p>
+
+{% if msg %}
+<div class="alert alert-{{ 'success' if msg == 'saved' else 'warning' }} alert-dismissible fade show" role="alert">
+  {% if msg == 'saved' %}Access levels saved for this sheet.{% else %}Could not save the matrix — please retry.{% endif %}
+  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+{% for s in sheets %}
+<form method="post" action="/masters/roles-matrix/grid" class="card mb-2">
+  <div class="card-body py-2">
+    <input type="hidden" name="sheet" value="{{ s }}">
+    <div class="d-flex flex-wrap align-items-end gap-2">
+      <strong class="me-2" style="min-width:230px">{{ s }}</strong>
+      {% for r in role_codes %}
+      <div>
+        <label class="form-label mb-0 small text-muted">{{ r }}</label>
+        <select name="r{{ loop.index0 }}" class="form-select form-select-sm" style="width:70px">
+          <option value="" {% if not grid[s][r] %}selected{% endif %}>&mdash;</option>
+          <option value="F" {% if grid[s][r] == 'F' %}selected{% endif %}>F</option>
+          <option value="V" {% if grid[s][r] == 'V' %}selected{% endif %}>V</option>
+        </select>
+      </div>
+      {% endfor %}
+      <button class="btn btn-sm btn-primary ms-2">Save</button>
+    </div>
+  </div>
+</form>
+{% else %}
+<div class="alert alert-info">No sheets found in the roles matrix.</div>
+{% endfor %}
+{% endblock %}

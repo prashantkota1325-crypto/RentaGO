@@ -1,0 +1,7 @@
+{% extends "base.html" %}{% block title %}SLA Scorecard{% endblock %}{% block content %}{% include "sla/_toolbar.html" %}
+<div class="d-flex justify-content-between align-items-center"><h2>SLA Department Scorecard</h2><a class="btn btn-outline-success" href="/sla/reports?export=1">Export CSV</a></div>
+<p class="text-muted">Compliance is resolved instances divided by resolved plus breached instances.</p>
+<div class="table-responsive"><table class="table table-striped"><thead><tr><th>Department</th><th>Total</th><th>Active</th><th>At Risk</th><th>Breached</th><th>Resolved</th><th>Compliance %</th><th>Average TAT (min)</th></tr></thead><tbody>
+{% for r in rows %}<tr><td>{{ r.department }}</td><td>{{ r.total }}</td><td>{{ r.active }}</td><td>{{ r.at_risk }}</td><td class="{% if r.breached %}text-danger fw-bold{% endif %}">{{ r.breached }}</td><td>{{ r.resolved }}</td><td>{{ r.compliance }}%</td><td>{{ r.average_minutes }}</td></tr>{% else %}<tr><td colspan="8">No SLA instances found.</td></tr>{% endfor %}
+</tbody></table></div>
+{% endblock %}

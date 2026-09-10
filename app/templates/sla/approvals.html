@@ -1,0 +1,13 @@
+{% extends "base.html" %}{% block title %}SLA Approval Workflows{% endblock %}{% block content %}{% include "sla/_toolbar.html" %}
+<h2>SLA Approval Workflows</h2>
+<p class="text-muted">Only published workflows can be used for SLA exception approvals.</p>
+<form method="post" class="card my-3"><div class="card-body row g-2">
+  <div class="col-md-3"><label class="form-label">Workflow Name</label><input name="workflow_name" class="form-control" required></div>
+  <div class="col-md-2"><label class="form-label">Department</label><input name="department" class="form-control"></div>
+  <div class="col-md-3"><label class="form-label">Event</label><input name="event_name" class="form-control" placeholder="SLA_EXCEPTION"></div>
+  <div class="col-md-2"><label class="form-label">Mode</label><select name="approval_mode" class="form-select"><option>SEQUENTIAL</option><option>ANY</option></select></div>
+  <div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary">Create Draft</button></div>
+</div></form>
+<div class="table-responsive"><table class="table table-sm table-striped"><thead><tr><th>Workflow</th><th>Department</th><th>Event</th><th>Mode</th><th>Steps</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+{% for r in rows %}<tr><td>{{ r.name }}<br><small>{{ r.workflow_id }}</small></td><td>{{ r.department or 'Any' }}</td><td>{{ r.event or 'Any' }}</td><td>{{ r.mode }}</td><td>{{ r.steps }}</td><td>{{ r.status }}</td><td>{% if r.status == 'Draft' %}<form method="post" action="/sla/approvals/{{ r.workflow_id }}/steps" class="d-inline-flex gap-1"><input name="approver_role" class="form-control form-control-sm" placeholder="Approver role" required><input name="approval_condition" class="form-control form-control-sm" placeholder="Condition"><button class="btn btn-sm btn-outline-primary">Add Step</button></form>{% if r.steps > 0 %}<form method="post" action="/sla/approvals/{{ r.workflow_id }}/publish" class="d-inline"><button class="btn btn-sm btn-success">Publish</button></form>{% endif %}{% endif %}</td></tr>{% else %}<tr><td colspan="7">No approval workflows configured.</td></tr>{% endfor %}
+</tbody></table></div>{% endblock %}

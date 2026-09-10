@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Sales Dashboard{% endblock %}
+{% block content %}
+<h2>Sales Dashboard</h2>
+
+<div class="card mb-4 mt-3">
+  <div class="card-header"><strong>Leads by Stage</strong></div>
+  <div class="card-body">
+    <div class="row">
+      {% for s in stages %}
+      <div class="col-md-3 mb-2">
+        <div class="card text-center"><div class="card-body">
+          <h4>{{ s.count }}</h4>
+          <p class="mb-0 small">{{ s.stage }}</p>
+          <p class="mb-0 text-muted small">Est. Rs. {{ '%.0f'|format(s.est_rev) }} &middot; Wtd Rs. {{ '%.0f'|format(s.weighted) }}</p>
+        </div></div>
+      </div>
+      {% else %}
+      <p class="text-muted">No leads yet.</p>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><strong>Leads (next follow-up first)</strong></div>
+  <div class="card-body table-responsive-cards">
+    <table class="table table-sm table-striped">
+      <thead><tr><th>Lead</th><th>Company</th><th>City</th><th>Contact</th>
+        <th>Owner</th><th>Stage</th><th>Probability</th><th>Est. Monthly Rev</th><th>Next Follow-up</th></tr></thead>
+      <tbody>
+      {% for l in leads %}
+        <tr>
+          <td>{{ l.lead_id }}</td>
+          <td>{{ l.company }}</td>
+          <td>{{ l.city }}</td>
+          <td>{{ l.contact }}</td>
+          <td>{{ l.owner }}</td>
+          <td><span class="badge bg-secondary">{{ l.stage }}</span></td>
+          <td>{{ l.probability or '-' }}</td>
+          <td>Rs. {{ l.est_rev or 0 }}</td>
+          <td>{{ l.next_followup or '-' }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="9" class="text-center text-muted">No leads.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

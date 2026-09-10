@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}SLA Definitions{% endblock %}
+{% block content %}
+{% include "sla/_toolbar.html" %}
+<div class="d-flex justify-content-between align-items-center"><h2>SLA Definitions</h2><div><a class="btn btn-outline-success" href="/sla/definitions/export">Export CSV</a> <form method="post" action="/sla/definitions/import" enctype="multipart/form-data" class="d-inline"><label class="btn btn-outline-primary mb-0">Import CSV<input type="file" name="file" accept=".csv" hidden onchange="this.form.submit()"></label></form> <a class="btn btn-primary" href="/sla/definitions/new">+ New SLA Definition</a></div></div>
+<p class="text-muted">Draft changes never affect processing until published. Publishing archives the previous active version.</p>
+<form method="get" class="mb-3"><select name="status" class="form-select" style="max-width:220px" onchange="this.form.submit()"><option value="">All statuses</option>{% for s in statuses %}<option {% if status_filter == s %}selected{% endif %}>{{ s }}</option>{% endfor %}</select></form>
+<div class="table-responsive"><table class="table table-sm table-striped"><thead><tr><th>Name</th><th>Department</th><th>Process/Event</th><th>Priority</th><th>Minutes</th><th>Warning %</th><th>Version</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+{% for r in rows %}<tr><td>{{ r.sla_name }}</td><td>{{ r.department }}</td><td>{{ r.process_name or '-' }} / {{ r.event_name }}</td><td>{{ r.priority }}</td><td>{{ r.duration_minutes }}</td><td>{{ r.warning_percent }}</td><td>{{ r.version }}</td><td>{{ r.status }}</td><td><a class="btn btn-sm btn-outline-secondary" href="/sla/definitions/new?source_id={{ r.definition_id }}">New Version</a>{% if r.status == 'Draft' %}<form method="post" action="/sla/definitions/{{ r.definition_id }}/publish" class="d-inline"><button class="btn btn-sm btn-success">Publish</button></form>{% endif %}</td></tr>{% else %}<tr><td colspan="9">No SLA definitions found.</td></tr>{% endfor %}
+</tbody></table></div>
+{% endblock %}

@@ -1,0 +1,77 @@
+/* RentaGO Web app styles */
+body { background: #f5f6fa; }
+.navbar-brand { font-weight: 700; letter-spacing: .5px; }
+.card { border: none; border-radius: .75rem; }
+.kpi-card h3 { font-size: 2rem; font-weight: 700; }
+
+/* Compact one-page Step 1 booking form. */
+.booking-form-modal .modal-body { font-size: .86rem; }
+.booking-form-modal label { font-size: .78rem; margin-bottom: .15rem; }
+.booking-form-modal .form-control,
+.booking-form-modal .form-select { padding: .28rem .45rem; font-size: .82rem; }
+.booking-form-modal .booking-section-title {
+  flex: 0 0 100%; margin: .15rem 0 .1rem; padding: .35rem .55rem;
+  color: #16386e; background: #eef3fb; border-left: 4px solid #16386e;
+  font-size: .9rem; font-weight: 700;
+}
+.booking-detail-section { padding: .85rem 1rem; background: #fff; border: 1px solid #e2e7ef; border-radius: .6rem; }
+.booking-detail-section h5 { margin: 0 0 .65rem; padding-bottom: .4rem; color: #16386e; border-bottom: 2px solid #e8eef8; font-size: 1rem; }
+.booking-form-modal .form-text { font-size: .72rem; }
+
+/* ---- Responsive / mobile-first layer ---- */
+
+/* Scrollable list tables on small screens (Bootstrap .table-responsive already
+   needs a wrapper; this keeps tables usable without a wrapper dependency). */
+.table-responsive-cards { width: 100%; overflow-x: auto; }
+
+/* Toolbars: let them wrap instead of overflowing the viewport */
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+.toolbar form { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+
+/* Touch targets on mobile */
+@media (max-width: 767.98px) {
+  body { font-size: 15px; }
+  .kpi-card h3 { font-size: 1.6rem; }
+  .d-flex.gap-2.mb-3,
+  .d-flex.justify-content-between.mb-3 { flex-wrap: wrap; gap: .5rem; }
+  /* stacked phone field on narrow screens */
+  .phone-field .input-group { flex-wrap: wrap; }
+  .phone-field .input-group > * { min-width: 0; flex: 1 1 auto; }
+  .phone-field select.phone-country { max-width: 100% !important; }
+  .phone-field select.phone-city { max-width: 100% !important; }
+  /* wider full-width buttons so they're tap-friendly */
+  .btn { white-space: normal; }
+  form.inline-form, .d-grid .btn { width: 100%; }
+}
+
+/* Narrow phones: stack the printed invoice cleanly for on-device reading */
+@media (max-width: 575.98px) {
+  .invoice-sheet { padding: 14px 12px; }
+  .inv-head { flex-direction: column; gap: .5rem; }
+  .inv-head .text-end { text-align: left !important; }
+  .dl-row { flex-direction: column; }
+  .dl-row > dt { width: 100%; }
+  .invoice-sheet .row { row-gap: .75rem; }
+  table.inv-table { min-width: 320px; }
+  .invoice-sheet .table-responsive-cards,
+  .invoice-sheet .inv-table-wrap { overflow-x: auto; }
+  /* keep print layout intact when actually printing */
+  @media print {
+    .inv-head { flex-direction: row; }
+    .inv-head .text-end { text-align: right !important; }
+    .dl-row { flex-direction: row; }
+    .dl-row > dt { width: 180px; }
+  }
+}
+
+/* Tablets */
+@media (min-width: 576px) and (max-width: 991.98px) {
+  .kpi-card h3 { font-size: 1.8rem; }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "RentaGO - Car Rental Management",
+  "short_name": "RentaGO",
+  "description": "RentaGO rental booking, dispatch, tracking and billing system",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#16386E",
+  "theme_color": "#16386E",
+  "icons": [
+    { "src": "/static/img/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/static/img/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/static/img/icon-180.png", "sizes": "180x180", "type": "image/png", "purpose": "maskable" },
+    { "src": "/static/img/rentago-icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

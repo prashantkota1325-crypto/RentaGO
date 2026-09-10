@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}My Profile{% endblock %}
+{% block content %}
+<div class="row justify-content-center mt-4"><div class="col-md-7">
+  <div class="card shadow"><div class="card-body">
+    <h3>My RentaGO Profile</h3>
+    <dl class="row mt-3 mb-0">
+      <dt class="col-sm-4">User ID</dt><dd class="col-sm-8">{{ user.user_id }}</dd>
+      <dt class="col-sm-4">Name</dt><dd class="col-sm-8">{{ user.name or '-' }}</dd>
+      <dt class="col-sm-4">Email</dt><dd class="col-sm-8">{{ user.email or '-' }}</dd>
+      <dt class="col-sm-4">Mobile</dt><dd class="col-sm-8">{{ user.mobile or '-' }}</dd>
+      <dt class="col-sm-4">Company</dt><dd class="col-sm-8">{{ user.company_name or '-' }}</dd>
+      <dt class="col-sm-4">Role</dt><dd class="col-sm-8">{{ user.role or '-' }}</dd>
+      <dt class="col-sm-4">Account Status</dt><dd class="col-sm-8">{{ user.status or 'Active' }}</dd>
+    </dl>
+    <div class="alert alert-info mt-4 mb-0 small">Your password is securely stored as a one-way hash and is never displayed. Use Change Password to set a new password.</div>
+    <a class="btn btn-primary mt-3" href="/auth/change-password">Change Password</a>
+  </div></div>
+</div></div>
+{% endblock %}

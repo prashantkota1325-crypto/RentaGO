@@ -1,0 +1,13 @@
+{% extends "base.html" %}{% block title %}New Business Rule{% endblock %}{% block content %}
+<a href="/rules">&larr; Business Rules</a><h2 class="mt-2">New Business Rule Draft</h2>
+<form method="post" action="/rules/new" class="card"><div class="card-body row g-3">
+<div class="col-md-6"><label class="form-label">Rule Name</label><input name="rule_name" class="form-control" required></div>
+<div class="col-md-3"><label class="form-label">Event Name</label><input name="event_name" class="form-control" placeholder="BOOKING_CREATED" required></div>
+<div class="col-md-3"><label class="form-label">Department</label><input name="department" class="form-control"></div>
+<div class="col-md-2"><label class="form-label">Priority</label><select name="priority" class="form-select"><option>P0</option><option>P1</option><option selected>P2</option><option>P3</option></select></div>
+<div class="col-md-3"><label class="form-label">Precedence Scope</label><select name="scope_type" class="form-select"><option value="">Global</option><option value="department">Department</option><option value="process">Process</option><option value="service">Service / Location</option><option value="corporate">Corporate</option><option value="vendor">Vendor</option><option value="contract">Contract</option><option value="transaction">Transaction</option></select></div>
+<div class="col-md-4"><label class="form-label">Scope Value</label><input name="scope_value" class="form-control" placeholder="e.g. CORP-001 or Airport Transfer"></div>
+<div class="col-md-5"><label class="form-label">Conditions JSON</label><textarea name="conditions" class="form-control" rows="6">{}</textarea></div>
+<div class="col-md-5"><label class="form-label">Actions JSON</label><textarea name="actions" class="form-control" rows="6">{"duration_minutes": 15, "priority": "P1"}</textarea></div>
+</div><div class="card-footer"><button class="btn btn-primary">Save Draft</button></div></form>
+{% endblock %}

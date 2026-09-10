@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}{{ cfg.title }}{% endblock %}
+{% block content %}
+<h2>{{ cfg.title }} <span class="text-muted small fs-6">{{ total }} records</span></h2>
+
+{% set msg = request.query_params.get('msg', '') %}
+{% if msg %}
+<div class="alert alert-{{ 'success' if msg in ['created', 'updated'] else 'warning' }} alert-dismissible fade show" role="alert">
+  {% if msg == 'created' %}Record created.{% elif msg == 'updated' %}Record updated.{% elif msg == 'not-allowed' %}
+  Your role has view-only access to this master.{% elif msg == 'not-found' %}Record not found.{% elif msg == 'error' %}
+  Could not save — check for a duplicate ID or an invalid value.{% else %}{{ msg }}{% endif %}
+  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+<form method="get" class="card mb-3"><div class="card-body py-2">
+  <div class="row g-2 align-items-end">
+    <div class="col-md-3">
+      <label class="form-label mb-0 small text-muted">Quick search (all fields)</label>
+      <input name="q" value="{{ query }}" class="form-control" placeholder="Search {{ cfg.title|lower }}...">
+    </div>
+    {% for f in cfg.filters %}
+    <div class="col-md-2">
+      <label class="form-label mb-0 small text-muted">{{ f.label }}</label>
+      <input name="{{ f.name }}" value="{{ f.value }}" class="form-control" placeholder="contains...">
+    </div>
+    {% endfor %}
+    <div class="col-md-auto d-flex gap-2">
+      <button class="btn btn-primary">Search</button>
+      <a href="/masters/{{ cfg.key }}" class="btn btn-outline-secondary">Clear</a>
+    </div>
+  </div>
+  <div class="form-text mb-0 small">Filters combine (all filled fields must match);
+    the quick search matches any field.</div>
+</div></form>
+<div class="d-flex justify-content-end mb-2">
+  {% if level == 'F' %}<a class="btn btn-primary" href="/masters/{{ cfg.key }}/new">+ New {{ cfg.title[:-1] if cfg.title.endswith('s') else cfg.title }}</a>{% endif %}
+</div>
+
+<div class="table-responsive-cards">
+<table class="table table-striped table-hover">
+  <thead><tr>
+    {% for col, label in cfg.list %}<th>{{ label }}</th>{% endfor %}
+    {% if level == 'F' %}<th></th>{% endif %}
+  </tr></thead>
+  <tbody>
+  {% for row in rows %}
+    <tr>
+      {% for col, label in cfg.list %}
+        <td>
+          {% if col == 'status' %}
+            {% if row[col] == 'Active' %}<span class="badge bg-success">{{ row[col] }}</span>
+            {% else %}<span class="badge bg-secondary">{{ row[col] or '-' }}</span>{% endif %}
+           {% elif col in ['login_dt', 'logout_dt'] %}{{ row[col]|hour_minute or '-' }}
+           {% elif col == 'hours_worked' %}{{ row[col]|duration_hm or '00:00' }}
+           {% elif loop.first %}<a href="/masters/{{ cfg.key }}/{{ row[cfg.list[0][0]] }}/edit">{{ row[col] }}</a>
+          {% else %}{{ row[col] if row[col] is not none else '-' }}{% endif %}
+        </td>
+      {% endfor %}
+      {% if level == 'F' %}
+      <td><a class="btn btn-sm btn-outline-primary" href="/masters/{{ cfg.key }}/{{ row[cfg.list[0][0]] }}/edit">Edit</a></td>
+      {% endif %}
+    </tr>
+  {% else %}
+    <tr><td colspan="{{ cfg.list|length + 1 if level == 'F' else cfg.list|length }}" class="text-center text-muted">No records found.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+{% if pages > 1 %}
+<nav>
+  <ul class="pagination pagination-sm">
+    <li class="page-item {% if page <= 1 %}disabled{% endif %}">
+      <a class="page-link" href="/masters/{{ cfg.key }}?{{ qs }}{{ '&' if qs }}page={{ page - 1 }}">&laquo;</a></li>
+    {% for p in range(1, pages + 1) %}
+      {% if p > page + 4 or p < page - 4 %}
+        {% if p == 1 or p == pages or p == page + 5 or p == page - 5 %}<li class="page-item disabled"><span class="page-link">&hellip;</span></li>{% endif %}
+      {% else %}
+        <li class="page-item {% if p == page %}active{% endif %}">
+          <a class="page-link" href="/masters/{{ cfg.key }}?{{ qs }}{{ '&' if qs }}page={{ p }}">{{ p }}</a></li>
+      {% endif %}
+    {% endfor %}
+    <li class="page-item {% if page >= pages %}disabled{% endif %}">
+      <a class="page-link" href="/masters/{{ cfg.key }}?{{ qs }}{{ '&' if qs }}page={{ page + 1 }}">&raquo;</a></li>
+  </ul>
+</nav>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,14 @@
+{% extends "base.html" %}{% block title %}Tenant Settings{% endblock %}{% block content %}
+<h2>{{ tenant.display_name }} Settings</h2><p class="text-muted">Tenant administrators can edit only their own tenant profile and branding settings.</p>
+<form method="post" class="card"><div class="card-body row g-3">
+<div class="col-md-6"><label class="form-label">Display Name</label><input name="display_name" class="form-control" value="{{ tenant.display_name }}" required></div>
+<div class="col-md-3"><label class="form-label">Timezone</label><input name="timezone" class="form-control" value="{{ tenant.timezone }}"></div>
+<div class="col-md-3"><label class="form-label">Currency</label><input name="currency" class="form-control" value="{{ tenant.currency }}"></div>
+<div class="col-md-6"><label class="form-label">Logo URL</label><input name="logo_url" class="form-control" value="{{ tenant.logo_url or '' }}"></div>
+<div class="col-md-6"><label class="form-label">Favicon URL</label><input name="favicon_url" class="form-control" value="{{ tenant.favicon_url or '' }}"></div>
+<div class="col-md-3"><label class="form-label">Primary Color</label><input name="primary_color" class="form-control" value="{{ tenant.primary_color or '' }}" placeholder="#16386e"></div>
+<div class="col-md-3"><label class="form-label">Secondary Color</label><input name="secondary_color" class="form-control" value="{{ tenant.secondary_color or '' }}" placeholder="#0d6efd"></div>
+<div class="col-md-6"><label class="form-label">Custom Domain</label><input name="domain" class="form-control" value="{{ tenant.domain or '' }}" placeholder="portal.customer.com"></div>
+<div class="col-md-6"><label class="form-label">Tenant Subdomain</label><input name="subdomain" class="form-control" value="{{ tenant.subdomain or '' }}" placeholder="customer.rentago.app"></div>
+</div><div class="card-footer"><button class="btn btn-primary">Save Tenant Settings</button></div></form>
+{% endblock %}

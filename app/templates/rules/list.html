@@ -1,0 +1,6 @@
+{% extends "base.html" %}{% block title %}Business Rules{% endblock %}{% block content %}
+<div class="d-flex justify-content-between"><h2>Business Rules</h2><div><a class="btn btn-outline-success" href="/rules/export">Export CSV</a> <form method="post" action="/rules/import" enctype="multipart/form-data" class="d-inline"><label class="btn btn-outline-primary mb-0">Import CSV<input type="file" name="file" accept=".csv" hidden onchange="this.form.submit()"></label></form> <a class="btn btn-primary" href="/rules/new">+ New Rule</a></div></div>
+<p class="text-muted">Published rules are evaluated by the SLA engine for matching events.</p>
+<table class="table table-striped"><thead><tr><th>Name</th><th>Event</th><th>Department</th><th>Priority</th><th>Status</th><th></th></tr></thead><tbody>
+{% for r in rows %}<tr><td>{{ r.rule_name }}</td><td>{{ r.event_name }}</td><td>{{ r.department or '-' }}</td><td>{{ r.priority }}</td><td>{{ r.status }}</td><td>{% if r.status == 'Draft' %}<form method="post" action="/rules/{{ r.rule_id }}/publish"><button class="btn btn-sm btn-success">Publish</button></form>{% endif %}</td></tr>{% else %}<tr><td colspan="6">No business rules.</td></tr>{% endfor %}</tbody></table>
+{% endblock %}

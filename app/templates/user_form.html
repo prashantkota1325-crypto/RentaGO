@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}{% if rec_id %}Edit User{% else %}New User{% endif %}{% endblock %}
+{% block content %}
+<a href="/auth/users">&larr; Back to Users</a>
+<h2 class="mt-2">{% if rec_id %}Edit User{% else %}New User{% endif %}</h2>
+
+{% if msg %}
+<div class="alert alert-warning alert-dismissible fade show" role="alert">
+  {% if msg == 'missing' %}Please fill in all required fields.{% elif msg == 'password-mismatch' %}
+  Passwords do not match.{% elif msg == 'password-short' %}Password must be at least 6 characters.
+  {% elif msg == 'exists' %}That User ID is already taken.{% elif msg == 'error' %}
+  Could not save — please check the values and retry.{% else %}{{ msg }}{% endif %}
+  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+<form method="post"
+      action="{% if rec_id %}/auth/users/{{ rec_id }}/edit{% else %}/auth/users/new{% endif %}">
+  <div class="card"><div class="card-body row g-3">
+    {% if not rec_id %}
+    <div class="col-md-4">
+      <label class="form-label">User ID *</label>
+       <input name="user_id" class="form-control" pattern="[A-Za-z0-9]+" minlength="1" title="Use letters and numbers only" required value="{{ rec.user_id or '' }}">
+    </div>
+    {% else %}
+    <div class="col-md-4">
+      <label class="form-label">User ID</label>
+      <input class="form-control" value="{{ rec.user_id }}" readonly>
+    </div>
+    {% endif %}
+    <div class="col-md-4"><label class="form-label">Guest/Driver Mobile PIN</label><input name="mobile_pin" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" class="form-control" placeholder="Optional 4-digit PIN"><div class="form-text">Used only for internal mobile trip login.</div></div>
+    <div class="col-md-4">
+      <label class="form-label">Name *</label>
+      <select name="name" id="user_name" class="form-select" required
+              data-current-name="{{ rec.name or '' }}">
+        {% if rec.name %}<option value="{{ rec.name }}" selected>{{ rec.name }}</option>{% endif %}
+        <option value="">Select a company first</option>
+        <option value="__manual__">Other / enter manually</option>
+      </select>
+      <input name="manual_name" id="user_manual_name" class="form-control mt-1"
+             placeholder="Enter name" style="display:none">
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">Email *</label>
+      <input name="email" id="user_email" type="email" class="form-control" required
+             value="{{ rec.email or '' }}">
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">Mobile</label>
+      <input name="mobile" class="form-control" value="{{ rec.mobile or '' }}">
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">Company</label>
+      <select name="company_name" id="user_company" class="form-select"
+              data-current-company="{{ rec.company_name or '' }}">
+        <option value="">RentaGO Internal / No Company</option>
+        <option value="__new_individual__" data-org-id="__new__" data-kind="individual">+ New Individual Guest</option>
+        {% for c in companies or [] %}
+        <option value="{{ c.name }}" data-org-id="{{ c.id }}" data-kind="corporate"
+          {% if rec.company_name == c.name %}selected{% endif %}>{{ c.name }}</option>
+        {% endfor %}
+        {% for v in vendors or [] %}
+        <option value="{{ v.name }}" data-org-id="{{ v.id }}" data-kind="vendor"
+          {% if rec.company_name == v.name %}selected{% endif %}>{{ v.name }} (Vendor)</option>
+        {% endfor %}
+        {% for i in individuals or [] %}
+        <option value="{{ i.name }}" data-org-id="{{ i.id }}" data-kind="individual"
+          {% if rec.company_name == i.name %}selected{% endif %}>Individual Guest: {{ i.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">Role</label>
+      <select name="role" id="user_role" class="form-select">
+        {% for r in roles %}
+        <option value="{{ r }}" {% if (rec.role or 'Operations') == r %}selected{% endif %}>{{ r }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">Status</label>
+      <select name="status" class="form-select">
+        {% for s in statuses %}
+        <option value="{{ s }}" {% if (rec.status or 'Active') == s %}selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% if rec_id %}
+    <div class="col-md-4">
+      <label class="form-label">New Password</label>
+      <input name="new_password" type="password" class="form-control" placeholder="Leave blank to keep current">
+    </div>
+    {% else %}
+    <div class="col-md-4">
+      <label class="form-label">Password *</label>
+      <input name="password" type="password" class="form-control" required>
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">Confirm Password *</label>
+      <input name="confirm_password" type="password" class="form-control" required>
+    </div>
+    {% endif %}
+  </div></div>
+  <div class="mt-3 d-flex gap-2">
+    <button class="btn btn-primary">{% if rec_id %}Save Changes{% else %}Create User{% endif %}</button>
+    <a class="btn btn-outline-secondary" href="/auth/users">Cancel</a>
+  </div>
+</form>
+<script src="/static/js/user-form.js"></script>
+{% endblock %}

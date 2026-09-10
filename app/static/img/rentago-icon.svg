@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="RentaGO">
+  <defs>
+    <linearGradient id="rg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#16386E"/>
+      <stop offset="1" stop-color="#2F7DE1"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#rg)"/>
+  <path d="M112 384 Q 256 336 400 384" fill="none" stroke="#2FD6B0" stroke-width="28" stroke-linecap="round"/>
+  <text x="256" y="330" font-family="'Segoe UI', Arial, sans-serif" font-size="268" font-weight="bold" fill="#FFFFFF" text-anchor="middle">R</text>
+</svg>

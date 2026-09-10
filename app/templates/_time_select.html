@@ -1,0 +1,19 @@
+{# Reusable time dropdown (search + selection).
+   expectations: name (server-side field name), [value] (current value)
+   Renders a hidden input carrying `name` plus a <select> with 15-minute
+   options (00:00-23:45) and an "Other (type)" fallback for arbitrary times
+   (e.g. 10:35 or 02:15 PM). /static/js/time-dd.js keeps the hidden input in
+   sync with whichever control the user uses. #}
+{% macro time_select(name, value='') -%}
+<input type="hidden" name="{{ name }}" value="{{ value }}">
+<select class="form-select time-dd">
+  <option value=""></option>
+  {% for h in range(24) %}{% for m in (0, 15, 30, 45) %}
+  {% set t = '%02d:%02d' % (h, m) %}
+  <option value="{{ t }}"{% if value == t %} selected{% endif %}>{{ t }}</option>
+  {% endfor %}{% endfor %}
+  <option value="__other__">Other (type time)</option>
+</select>
+<input type="text" class="form-control form-control-sm mt-1 time-other" style="display:none"
+       placeholder="e.g. 10:35 or 02:15 PM">
+{%- endmacro %}

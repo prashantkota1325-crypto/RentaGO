@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Notifications{% endblock %}
+{% block content %}
+<h2>Notifications Outbox</h2>
+<p class="text-muted">Email/WhatsApp messages queued per the notification matrix.
+  Until tenant SMTP is enabled, click <b>Open</b> to send via your mail client /
+  WhatsApp Web, then mark as sent.</p>
+
+<div class="toolbar">
+  <form method="get">
+    <input name="event" value="{{ event_filter }}" placeholder="Filter by event (step1, cancel...)" class="form-control" style="max-width:240px">
+    <input name="status" value="{{ status_filter }}" placeholder="Filter by status" class="form-control" style="max-width:160px">
+    <button class="btn btn-outline-secondary">Filter</button>
+    {% if event_filter or status_filter %}<a href="/notifications" class="btn btn-outline-danger">Clear</a>{% endif %}
+  </form>
+</div>
+
+<div class="table-responsive-cards">
+<table class="table table-striped table-hover align-middle">
+  <thead><tr>
+    <th>ID</th><th>Event</th><th>Booking</th><th>Channel</th><th>Recipient</th>
+    <th>Subject</th><th>Queued</th><th>Status</th><th style="width:190px">Action</th>
+  </tr></thead>
+  <tbody>
+  {% for n in notifications %}
+    <tr>
+      <td>{{ n.notification_id }}</td>
+      <td><span class="badge bg-secondary">{{ n.event }}</span></td>
+      <td>{% if n.booking_id %}<a href="/bookings/{{ n.booking_id }}">{{ n.booking_id }}</a>{% else %}-{% endif %}</td>
+      <td>
+        {% if n.channel == 'email' %}<span class="badge bg-primary">Email</span>
+        {% else %}<span class="badge bg-success">WhatsApp</span>{% endif %}
+      </td>
+      <td>{{ n.recipient_name or n.recipient_email or n.recipient_phone }}
+        <div class="text-muted small">{{ n.recipient_email or n.recipient_phone or '' }}</div></td>
+      <td class="small">{{ n.subject }}</td>
+      <td class="small">{{ n.created_dt }}</td>
+      <td>
+        {% if n.status == 'Sent Manually' %}<span class="badge bg-success">Sent</span>
+        {% else %}<span class="badge bg-warning text-dark">Queued</span>{% endif %}
+      </td>
+      <td class="text-nowrap">
+        {% if n.link %}<a class="btn btn-sm btn-outline-primary" href="{{ n.link }}" target="_blank">Open</a>{% endif %}
+        {% if n.status != 'Sent Manually' %}
+        <form method="post" action="/notifications/{{ n.notification_id }}/sent" class="d-inline">
+          <button class="btn btn-sm btn-outline-success">Mark Sent</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="9" class="text-center text-muted">No notifications queued.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

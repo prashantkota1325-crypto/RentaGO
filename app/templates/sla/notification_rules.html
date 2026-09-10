@@ -1,0 +1,13 @@
+{% extends "base.html" %}{% block title %}SLA Notification Rules{% endblock %}{% block content %}{% include "sla/_toolbar.html" %}
+<h2>SLA Notification Rules</h2>
+<form method="post" class="card mb-4"><div class="card-body row g-2">
+<div class="col-md-3"><label class="form-label">Event</label><input name="event_name" class="form-control" placeholder="SLA_BREACHED" required></div>
+<div class="col-md-2"><label class="form-label">Trigger Status</label><input name="trigger_status" class="form-control" placeholder="BREACHED"></div>
+<div class="col-md-3"><label class="form-label">Channels</label><input name="channels" class="form-control" placeholder="in-app,email,whatsapp" required></div>
+<div class="col-md-3"><label class="form-label">Recipient Roles</label><input name="recipient_roles" class="form-control" placeholder="Operations,Manager"></div>
+<div class="col-md-1 d-flex align-items-end"><button class="btn btn-primary">Add</button></div>
+</div></form>
+<table class="table table-striped table-sm"><thead><tr><th>Event</th><th>Trigger</th><th>Channels</th><th>Recipients</th><th>Template</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+{% for r in rows %}<tr><td>{{ r.event }}</td><td>{{ r.trigger or '-' }}</td><td>{{ r.channels }}</td><td>{{ r.roles or '-' }}</td><td>{{ r.template or '-' }}</td><td>{{ r.status }}</td><td>{% if r.status == 'Draft' %}<form method="post" action="/sla/notification-rules/{{ r.rule_id }}/publish"><button class="btn btn-sm btn-success">Publish</button></form>{% endif %}</td></tr>{% else %}<tr><td colspan="7">No notification rules configured.</td></tr>{% endfor %}
+</tbody></table>
+{% endblock %}

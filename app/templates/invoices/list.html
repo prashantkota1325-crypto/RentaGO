@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Invoices{% endblock %}
+{% block content %}
+<h2>Invoices</h2>
+<div class="toolbar">
+  <form method="get">
+    <input name="status" value="{{ status_filter }}" placeholder="Filter by status" class="form-control" style="max-width:200px">
+    <input name="q" value="{{ query }}" placeholder="Guest / Booking ID" class="form-control" style="max-width:220px">
+    <button class="btn btn-outline-secondary">Filter</button>
+    {% if status_filter or query %}<a href="/invoices" class="btn btn-outline-danger">Clear</a>{% endif %}
+  </form>
+</div>
+<div class="table-responsive-cards">
+<table class="table table-striped table-hover">
+  <thead><tr>
+    <th>Invoice ID</th><th>Booking</th><th>Vendor Invoice</th><th>Trip ID</th><th>Guest</th><th>Company</th>
+    <th>Pickup Date</th><th>Invoice Status</th><th>Payment Status</th><th>Original</th><th>Final</th>
+  </tr></thead>
+  <tbody>
+  {% for i in invoices %}
+    <tr>
+      <td><a href="/invoices/{{ i.invoice_id }}">{{ i.invoice_id }}</a></td>
+      <td><a href="/bookings/{{ i.booking_id }}">{{ i.booking_id }}</a></td>
+      <td>{{ i.vendor_invoice or '-' }}</td>
+      <td>{% if i.trip_id %}<a href="/trips/{{ i.trip_id }}">{{ i.trip_id }}</a>{% else %}-{% endif %}</td>
+      <td>{{ i.guest_name }}</td>
+      <td>{{ i.company_name or '' }}</td>
+      <td>{{ i.pickup_date }}</td>
+      <td><span class="badge bg-secondary">{{ i.invoice_status }}</span></td>
+      <td>{{ i.payment_status }}</td>
+      <td>{{ i.original_amount }}</td>
+      <td>{{ i.final_amount }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="11" class="text-center text-muted">No invoices found.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

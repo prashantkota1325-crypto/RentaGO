@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Verify RentaGO Login{% endblock %}
+{% block content %}
+<div class="row justify-content-center mt-5"><div class="col-md-4">
+  <div class="card shadow"><div class="card-body">
+    <h4 class="text-center">Verify Login</h4>
+    <p class="text-muted small text-center">Enter the verification code sent to your registered email address.</p>
+    {% if request.query_params.get('msg') == 'mfa-invalid' %}<div class="alert alert-danger py-2">Invalid verification code.</div>{% endif %}
+    <form method="post" action="/auth/verify-otp">
+      <label class="form-label">Email OTP</label>
+      <input name="code" class="form-control text-center" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autofocus>
+      <button class="btn btn-primary w-100 mt-3">Verify and Continue</button>
+    </form>
+  </div></div>
+</div></div>
+{% endblock %}

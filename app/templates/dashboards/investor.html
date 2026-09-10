@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Investor MIS{% endblock %}
+{% block content %}
+<h2>Investor MIS</h2>
+<div class="row mt-4">
+  <div class="col-md-3 mb-3"><div class="card text-center"><div class="card-body">
+    <h3>{{ kpi.bookings }}</h3><p class="mb-0">Total Bookings</p></div></div></div>
+  <div class="col-md-3 mb-3"><div class="card text-center"><div class="card-body">
+    <h3>{{ kpi.completed_trips }}</h3><p class="mb-0">Completed Trips</p></div></div></div>
+  <div class="col-md-3 mb-3"><div class="card text-center"><div class="card-body">
+    <h3 class="text-danger">{{ kpi.cancelled }}</h3><p class="mb-0">Cancelled</p></div></div></div>
+  <div class="col-md-3 mb-3"><div class="card text-center"><div class="card-body">
+    <h3>Rs. {{ '%.0f'|format(kpi.revenue) }}</h3><p class="mb-0">Invoiced Revenue</p></div></div></div>
+</div>
+<div class="row">
+  <div class="col-md-3 mb-3"><div class="card text-center"><div class="card-body">
+    <h3>Rs. {{ '%.0f'|format(kpi.avg_invoice) }}</h3><p class="mb-0">Avg Invoice Value</p></div></div></div>
+  <div class="col-md-3 mb-3"><div class="card text-center"><div class="card-body">
+    <h3>{{ kpi.companies }}</h3><p class="mb-0">Corporate Clients</p></div></div></div>
+  <div class="col-md-3 mb-3"><div class="card text-center"><div class="card-body">
+    <h3>{{ kpi.vendors }}</h3><p class="mb-0">Vendors</p></div></div></div>
+  <div class="col-md-3 mb-3"><div class="card text-center"><div class="card-body">
+    <h3>{{ kpi.drivers }}</h3><p class="mb-0">Drivers</p></div></div></div>
+</div>
+{% endblock %}

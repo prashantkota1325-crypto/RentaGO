@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Home{% endblock %}
+{% block content %}
+<h2>Welcome, {{ user.name }}</h2>
+<p class="text-muted">{{ user.role }} &middot; {{ user.company or 'N/A' }}</p>
+
+{% set msg = request.query_params.get('msg', '') %}
+{% if msg %}
+<div class="alert alert-{{ 'success' if msg in ['pwd-changed', 'logged-out'] else 'warning' }} alert-dismissible fade show" role="alert">
+  {% if msg == 'pwd-changed' %}Password changed successfully.{% elif msg == 'wrong-old' %}
+  The old password you entered is incorrect.{% elif msg == 'access-denied' %}
+  Your role does not have access to that module.{% elif msg == 'logged-out' %}
+  You have been signed out.{% else %}{{ msg }}{% endif %}
+  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+{% set nav = nav_levels(user) %}
+<div class="row mt-4">
+  {% if nav.bookings %}
+  <div class="col-md-4 mb-3">
+    <a href="/bookings" class="text-decoration-none">
+      <div class="card text-center"><div class="card-body">
+        <h5>Bookings</h5><p class="text-muted">View & create bookings</p>
+      </div></div>
+    </a>
+  </div>
+  {% endif %}
+  {% if nav.trips %}
+  <div class="col-md-4 mb-3">
+    <a href="/trips" class="text-decoration-none">
+      <div class="card text-center"><div class="card-body">
+        <h5>Trips</h5><p class="text-muted">Trip execution records</p>
+      </div></div>
+    </a>
+  </div>
+  {% endif %}
+  {% if nav.invoices %}
+  <div class="col-md-4 mb-3">
+    <a href="/invoices" class="text-decoration-none">
+      <div class="card text-center"><div class="card-body">
+        <h5>Invoices</h5><p class="text-muted">Provisional & final invoices</p>
+      </div></div>
+    </a>
+  </div>
+  {% endif %}
+  {% if nav.payments %}
+  <div class="col-md-4 mb-3">
+    <a href="/payments" class="text-decoration-none">
+      <div class="card text-center"><div class="card-body">
+        <h5>Payments</h5><p class="text-muted">Receipts & vendor payments</p>
+      </div></div>
+    </a>
+  </div>
+  {% endif %}
+  {% if nav.dashboards %}
+  <div class="col-md-4 mb-3">
+    <a href="/dashboards" class="text-decoration-none">
+      <div class="card text-center"><div class="card-body">
+        <h5>Dashboard</h5><p class="text-muted">Key business metrics</p>
+      </div></div>
+    </a>
+  </div>
+  {% endif %}
+  {% if nav.feedback %}
+  <div class="col-md-4 mb-3">
+    <a href="/feedback" class="text-decoration-none">
+      <div class="card text-center border-warning"><div class="card-body">
+        <h5>Feedback &amp; Ownership</h5><p class="text-muted">Review, assign, follow up, and rectify Guest feedback</p>
+      </div></div>
+    </a>
+  </div>
+  {% endif %}
+</div>
+
+<div class="row mt-2">
+  <div class="col-md-6 mb-3">
+    <div class="card">
+      <div class="card-header">Change Password</div>
+      <div class="card-body">
+        <form method="post" action="/auth/change-password" class="row g-2">
+          <div class="col-md-5">
+            <label class="form-label">Old Password</label>
+            <input type="password" name="old" class="form-control" required>
+          </div>
+          <div class="col-md-5">
+            <label class="form-label">New Password</label>
+            <input type="password" name="new" class="form-control" minlength="6" required>
+          </div>
+          <div class="col-md-2 d-flex align-items-end">
+            <button class="btn btn-primary w-100">Update</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

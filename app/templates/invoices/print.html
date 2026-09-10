@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}{{ inv.invoice_id }}{% endblock %}
+{% block head %}{% endblock %}
+{% block content %}
+<style>
+  @media print {
+    .no-print { display: none !important; }
+    body { background: #fff; }
+    .invoice-sheet { box-shadow: none !important; border: 1px solid #ddd; width: 100% !important; }
+  }
+  .invoice-sheet {
+    max-width: 794px; margin: 0 auto; background: #fff; padding: 24px 28px;
+    border: 1px solid #ddd; border-radius: 6px;
+  }
+  .inv-title { color: #1f3864; }
+  .inv-head { display: flex; justify-content: space-between; align-items: flex-start; }
+  .dl-row { display: flex; }
+  .dl-row > dt { width: 180px; color: #555; }
+  .dl-row > dd { flex: 1; margin: 0; }
+  table.inv-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  table.inv-table th, table.inv-table td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; }
+  table.inv-table th { background: #f0f3f8; }
+  .tot { font-weight: bold; }
+  .brand-name { color: #000; font-weight: 700; font-size: 1rem; }
+  .brand-subtitle { color: #999; font-size: 0.85rem; }
+</style>
+<div class="invoice-sheet">
+  <div class="no-print mb-3 d-flex gap-2">
+    <button class="btn btn-primary" onclick="window.print()">Print / Save as PDF</button>
+    <a class="btn btn-outline-secondary" href="/invoices/{{ inv.invoice_id }}">Back</a>
+  </div>
+
+  <div class="inv-head">
+    <div>
+       <img src="{{ request.url.scheme }}://{{ request.url.netloc }}/static/img/rentago-logo.svg" alt="RentaGO Technologies Pvt Ltd" style="max-width:220px; height:auto">
+       <div class="brand-name">RentaGO Technologies Pvt Ltd</div>
+       <div class="brand-subtitle">(Smart Mobility Solutions)</div>
+      <h5 class="mt-2 mb-1">{{ inv.invoice_status }}</h5>
+      <div>Invoice ID: <b>{{ inv.invoice_id }}</b></div>
+      <div>Booking ID: {{ inv.booking_id }}</div>
+    </div>
+    <div class="text-end">
+      <div>Invoice Date: {{ inv.final_invoice_sent_on or inv.trip_end_date or '-' }}</div>
+      <div>Status: <b>{{ inv.payment_status }}</b></div>
+    </div>
+  </div>
+
+  <hr>
+
+  <div class="row">
+    <div class="col-md-6">
+      <h6>Bill To</h6>
+      <div><b>{{ inv.guest_name }}</b></div>
+      {% if inv.company_name %}<div>{{ inv.company_name }}</div>{% endif %}
+      {% if b and b.guest_contact %}<div>Contact: {{ b.guest_contact }}</div>{% endif %}
+      {% if b and b.guest_email %}<div>Email: {{ b.guest_email }}</div>{% endif %}
+    </div>
+    <div class="col-md-6">
+      <h6>Trip</h6>
+      <div>Pickup: {{ inv.pickup_address }} ({{ inv.pickup_date or '' }} {{ inv.pickup_time or '' }})</div>
+      <div>Drop: {{ inv.drop_address }}</div>
+      <div>Vehicle: {{ inv.vehicle_type or '-' }} &nbsp;|&nbsp; Package: {{ inv.package_type or '-' }}</div>
+    </div>
+  </div>
+  {% if inv.invoice_status != 'Final Invoice' and inv.payment_status != 'Final Invoice Sent' %}
+  <div class="dl-row"><dt>Final Bill Deadline</dt><dd>{{ inv.final_bill_deadline }}</dd></div>
+  {% endif %}
+
+  {% if t %}
+  <h6 class="mt-4 mb-1">Trip Details</h6>
+  <table class="inv-table">
+    <tbody>
+      {% if t.driver_name %}<tr><td width="40%">Driver Name</td><td>{{ t.driver_name }}</td></tr>{% endif %}
+      {% if t.driver_mobile %}<tr><td>Driver Mobile</td><td>{{ t.driver_mobile }}</td></tr>{% endif %}
+      {% if t.vehicle_no %}<tr><td>Vehicle No.</td><td>{{ t.vehicle_no }}</td></tr>{% endif %}
+      <tr><td>Route</td><td>{{ t.pickup_address }} &rarr; {{ t.drop_address }}</td></tr>
+      {% if t.pickup_date %}<tr><td>Pickup Date / Time</td><td>{{ t.pickup_date }} {% if t.pickup_start_time %}/ {{ t.pickup_start_time }}{% endif %}</td></tr>{% endif %}
+      {% if t.actual_start_dt %}<tr><td>Actual Trip Start Date / Time</td><td>{{ t.actual_start_dt }}</td></tr>{% endif %}
+      {% if t.driver_reporting_time %}<tr><td>Driver Reporting</td><td>{{ t.driver_reporting_time }}</td></tr>{% endif %}
+      {% if t.pickup_start_km is not none %}<tr><td>Pickup Odometer (km)</td><td>{{ t.pickup_start_km }}</td></tr>{% endif %}
+      {% if t.drop_end_km is not none %}<tr><td>Drop Odometer (km)</td><td>{{ t.drop_end_km }}</td></tr>{% endif %}
+      {% if t.actual_kms is not none %}<tr><td>Actual Kms</td><td>{{ t.actual_kms }}</td></tr>{% endif %}
+      {% if t.actual_hrs is not none %}<tr><td>Actual Hours</td><td>{{ t.actual_hrs }}</td></tr>{% endif %}
+      {% if t.extra_kms is not none %}<tr><td>Extra Kms</td><td>{{ t.extra_kms }}</td></tr>{% endif %}
+      {% if t.extra_hrs is not none %}<tr><td>Extra Hours</td><td>{{ t.extra_hrs }}</td></tr>{% endif %}
+      {% if t.trip_id %}<tr><td>Trip ID</td><td>{{ t.trip_id }}</td></tr>{% endif %}
+      {% if t.pickup_date %}<tr><td>Trip Start Date Time</td><td>{{ t.pickup_date }} {{ t.pickup_start_time or "" }}</td></tr>{% endif %}
+      {% if t.drop_end_time %}<tr><td>Trip End Date Time</td><td>{{ t.drop_end_time }}</td></tr>{% endif %}
+      {% if t.actual_end_dt %}<tr><td>Actual Trip End Date / Time</td><td>{{ t.actual_end_dt }}</td></tr>{% endif %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  <h6 class="mt-4">Amounts</h6>
+  <table class="inv-table">
+    <thead>
+      <tr><th>Description</th><th class="text-end">Amount (Rs.)</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Original Amount</td><td class="text-end">{{ inv.original_amount }}</td></tr>
+      <tr><td>Cancellation Charges</td><td class="text-end">{{ inv.cancellation_charges }}</td></tr>
+      <tr><td>Refund Amount</td><td class="text-end">{{ inv.refund_amount }}</td></tr>
+      <tr><td>Toll</td><td class="text-end">{{ inv.toll }}</td></tr>
+      <tr><td>Parking</td><td class="text-end">{{ inv.parking }}</td></tr>
+      <tr><td>Extra Kms</td><td class="text-end">{{ inv.extra_kms }}</td></tr>
+      <tr><td>Extra Hours</td><td class="text-end">{{ inv.extra_hours }}</td></tr>
+      <tr><td>Other Expenses</td><td class="text-end">{{ inv.other_expenses }}</td></tr>
+       <tr class="tot"><td>Total Trip Expenses</td><td class="text-end">{{ inv.total_vendor_expenses }}</td></tr>
+      <tr class="tot"><td>Final Amount Payable</td><td class="text-end">{{ inv.final_amount }}</td></tr>
+    </tbody>
+  </table>
+
+  {% if inv.cancellation_reason %}
+  <div class="mt-3 small text-muted">
+    Cancellation: {{ inv.cancellation_reason }} ({{ inv.cancellation_date or '-' }}) &bull; Policy: {{ inv.cancellation_policy or '-' }}
+  </div>
+  {% endif %}
+
+  <div class="mt-4 text-muted small">Please make the payment at the earliest. &mdash; RentaGO Operations Team</div>
+</div>
+{% endblock %}

@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Finance Dashboard{% endblock %}
+{% block content %}
+<h2>Finance Dashboard</h2>
+
+<div class="row mt-3 mb-3">
+  <div class="col-md-4"><div class="card text-center"><div class="card-body">
+    <h3>Rs. {{ '%.2f'|format(receivable) }}</h3><p class="mb-0">Receivable (unpaid final/cancellation)</p></div></div></div>
+  <div class="col-md-4"><div class="card text-center"><div class="card-body">
+    <h3>{{ overdue|length }}</h3><p class="mb-0">Overdue Trip Expenses (48h SLA)</p></div></div></div>
+  <div class="col-md-4"><div class="card text-center"><div class="card-body">
+    <h3>{{ pay_count }}</h3><p class="mb-0">Payments Recorded</p></div></div></div>
+</div>
+
+<div class="row">
+  <div class="col-md-6">
+    <div class="card mb-4">
+      <div class="card-header"><strong>Invoices by Status</strong></div>
+      <div class="card-body">
+        <table class="table table-sm table-striped">
+          <thead><tr><th>Status</th><th>Count</th></tr></thead>
+          <tbody>
+          {% for s in inv_status %}
+            <tr><td>{{ s.status }}</td><td>{{ s.count }}</td></tr>
+          {% else %}
+            <tr><td colspan="2" class="text-muted">No invoices.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card mb-4">
+      <div class="card-header"><strong>Payment Status of Invoices</strong></div>
+      <div class="card-body">
+        <table class="table table-sm table-striped">
+          <thead><tr><th>Payment Status</th><th>Count</th></tr></thead>
+          <tbody>
+          {% for s in pay_status %}
+            <tr><td>{{ s.status }}</td><td>{{ s.count }}</td></tr>
+          {% else %}
+            <tr><td colspan="2" class="text-muted">No invoices.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card mb-4">
+      <div class="card-header"><strong>Payments by Type</strong></div>
+      <div class="card-body">
+        <table class="table table-sm table-striped">
+          <thead><tr><th>Type</th><th>Count</th><th>Total</th></tr></thead>
+          <tbody>
+          {% for p in pay_totals %}
+            <tr><td>{{ p.type }}</td><td>{{ p.count }}</td><td>Rs. {{ '%.2f'|format(p.total) }}</td></tr>
+          {% else %}
+            <tr><td colspan="3" class="text-muted">No payments.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        <a class="btn btn-sm btn-outline-primary" href="/payments">Open Payments</a>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><strong>Overdue Trip Expenses</strong></div>
+      <div class="card-body">
+        <table class="table table-sm table-striped">
+          <thead><tr><th>Invoice</th><th>Guest</th><th>Company</th><th>Deadline</th></tr></thead>
+          <tbody>
+          {% for o in overdue %}
+            <tr class="table-danger">
+              <td><a href="/invoices/{{ o.invoice_id }}">{{ o.invoice_id }}</a></td>
+              <td>{{ o.guest }}</td><td>{{ o.company or '-' }}</td><td>{{ o.deadline }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="4" class="text-muted">Nothing overdue.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,11 @@
+{% extends "base.html" %}{% block title %}SLA Calendars{% endblock %}{% block content %}{% include "sla/_toolbar.html" %}
+<h2>SLA Working Hours &amp; Holidays</h2>
+<p class="text-muted">Changes affect newly calculated SLA due times and are audit logged.</p>
+<h4>Working Hours</h4>
+<div class="table-responsive"><table class="table table-sm table-striped"><thead><tr><th>Department</th><th>Day (0=Sunday)</th><th>Start Minute</th><th>End Minute</th><th>Timezone</th><th></th></tr></thead><tbody>
+{% for h in hours %}<tr><form method="post" action="/sla/calendars/hours"><td>{{ h.department }}<input type="hidden" name="department" value="{{ h.department }}"></td><td>{{ h.day }}<input type="hidden" name="day" value="{{ h.day }}"></td><td><input name="start_minute" type="number" min="0" max="1440" value="{{ h.start }}" class="form-control form-control-sm"></td><td><input name="end_minute" type="number" min="0" max="1440" value="{{ h.end }}" class="form-control form-control-sm"></td><td><input name="timezone" value="{{ h.timezone }}" class="form-control form-control-sm"></td><td><button class="btn btn-sm btn-primary">Save</button></td></form></tr>{% endfor %}
+</tbody></table></div>
+<h4 class="mt-4">Holiday Calendar</h4>
+<form method="post" action="/sla/calendars/holidays" class="row g-2 mb-3"><div class="col-md-2"><input name="holiday_date" type="date" class="form-control" required></div><div class="col-md-4"><input name="holiday_name" class="form-control" placeholder="Holiday name" required></div><div class="col-md-3"><input name="department" class="form-control" placeholder="Department (optional)"></div><div class="col-md-2"><select name="is_working_day" class="form-select"><option value="N">Holiday</option><option value="Y">Working day</option></select></div><div class="col-md-1"><button class="btn btn-primary">Add</button></div></form>
+<table class="table table-sm"><thead><tr><th>Date</th><th>Name</th><th>Department</th><th>Type</th></tr></thead><tbody>{% for h in holidays %}<tr><td>{{ h.date }}</td><td>{{ h.name }}</td><td>{{ h.department or 'All' }}</td><td>{{ 'Working day' if h.working == 'Y' else 'Holiday' }}</td></tr>{% endfor %}</tbody></table>
+{% endblock %}

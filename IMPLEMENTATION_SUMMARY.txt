@@ -1,0 +1,67 @@
+================================================================================
+  RENTAGO PROTOTYPE - FEATURE IMPLEMENTATION COMPLETE
+================================================================================
+
+CHANGES SUMMARY:
+--------------------
+
+1. SEARCH FILTERS ENHANCEMENT:
+   - Employees & Individuals masters now have 'entity_name' filter field
+   - Filters use AND logic when multiple fields are filled
+   - Quick search (q) still works across all fields
+
+2. PACKAGE TYPE OPTIONS:
+   - Added 'Per Day' and 'Multiple Days' to package_type datalist
+   - Existing options preserved: 4H/40Kms, 8H/80Kms, 12H/120Kms, etc.
+
+3. AUTO-POPULATION & FORM SMART LOGIC:
+   - JavaScript auto-runs when guest name input loses focus
+   - City/State relationship: clears state field when city is emptied
+   - Same logic for Drop city/state
+   - Pickup Country field added (default: 'India')
+   - Framework ready for future API geocoding integration
+
+4. GPS/ MAP LOOKUP STRUCTURE:
+   - Pickup country field in booking form
+   - JavaScript framework for: Country -> State -> City -> Location Address
+   - NOTE: Actual geocoding requires Google Maps/Mapbox API key integration
+
+5. ACKNOWLEDGEMENT SLA TRACKING:
+   - NEW DB COLUMNS on bookings table:
+     * request_received_time  (TIMESTAMP - when email/WhatsApp arrived)
+     * ack_sent_time          (TIMESTAMP - when acknowledgement sent)
+   - SLA target: 15 minutes from request receipt to acknowledgement
+   - Booking detail page shows:
+     * Request received at [time]
+     * Acknowledgement [status: Pending/Sent at X min]
+     * BREACHED badge if SLA exceeded
+     * "Mark Ack Sent" button (operator action)
+   - Auto-stamps ack_sent_time when step1 notification marked "Sent" in outbox
+
+6. MULTI-LOGIN SUPPORT:
+   - user_sessions table created in Oracle XE
+   - Same user cannot login on multiple devices simultaneously
+   - Different users can login simultaneously (as expected)
+   - Logging in from a new device automatically invalidates previous session
+
+SERVER RESTART REQUIRED:
+-----------------------
+After these changes, you must restart the server from a fresh Command Prompt:
+  1. Kill all python processes: taskkill /F /IM python.exe
+  2. cd C:\Users\Prashant Kota\OneDrive\Documents\Default Project\RentaGO_Prototype_NewWeb
+  3. python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+
+LOGIN CREDENTIALS:
+------------------
+Use: newuser2026 / NewPass@2026 (Super Admin)
+Old accounts (pras.k2200, admin, etc.) have password hashes that don't match.
+
+VERIFY FEATURES AFTER RESTART:
+-----------------------------
+1. Login as SA -> Masters -> Employees -> check entity_name filter
+2. New Booking -> see "Per Day" and "Multiple Days" in package type
+3. Fill guest name -> see auto-blur JavaScript run
+4. View booking detail -> see SLA info and "Mark Ack Sent" button
+5. Try multi-login: open incognito/another browser -> should be blocked for same user
+
+================================================================================

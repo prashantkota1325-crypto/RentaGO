@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}SLA Dashboard{% endblock %}
+{% block content %}
+<div class="alert alert-success py-1 small" id="slaLiveStatus">SLA Dashboard live refresh enabled · updating every 60 seconds</div>
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2"><h2>SLA Dashboard</h2><div class="d-flex flex-wrap gap-1"><a class="btn btn-outline-primary" href="/sla/instances">Control Tower</a> <a class="btn btn-outline-primary" href="/sla/definitions">Manage SLA Definitions</a> <a class="btn btn-outline-secondary" href="/sla/simulator">Rule Simulator</a> <a class="btn btn-outline-secondary" href="/sla/notification-rules">Notification Rules</a> <a class="btn btn-outline-secondary" href="/sla/escalations">Escalations</a> <a class="btn btn-outline-secondary" href="/sla/exceptions">Exceptions</a> <a class="btn btn-outline-secondary" href="/sla/approvals">Approval Workflows</a> <a class="btn btn-outline-secondary" href="/sla/events">Event History</a> <a class="btn btn-outline-secondary" href="/sla/reports/instances">Instance Report</a> <a class="btn btn-outline-secondary" href="/sla/escalation-history">Escalation History</a> <a class="btn btn-outline-secondary" href="/sla/notification-queue">Notification Queue</a> <a class="btn btn-outline-secondary" href="/sla/audit">Governance Audit</a> <a class="btn btn-outline-secondary" href="/sla/calendars">Calendars</a> <a class="btn btn-outline-secondary" href="/sla/reports">Scorecard</a></div></div>
+<p class="text-muted">Super Admin SLA monitoring across all departments</p>
+
+<div class="row mt-4">
+  <div class="col-md-4 mb-3">
+    <div class="card text-white bg-primary o-hidden h-100">
+      <div class="card-body">
+        <h5 class="card-title">Vendor SLA (5 min)</h5>
+        <p class="card-text">{{ vendor_no_alloc }} bookings without vendor allocation</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4 mb-3">
+    <div class="card text-white bg-warning o-hidden h-100">
+      <div class="card-body">
+        <h5 class="card-title">Driver SLA (45/60 min)</h5>
+        <p class="card-text">{{ vendor_without_driver }} bookings with vendor but no driver</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4 mb-3">
+    <div class="card text-white bg-danger o-hidden h-100">
+      <div class="card-body">
+        <h5 class="card-title">Ack SLA (15 min)</h5>
+        <p class="card-text">{{ no_ack }} bookings waiting for acknowledgment</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<hr class="mt-4"/>
+
+<div class="row g-2 mb-4">
+  <div class="col-md-4"><div class="card border-success"><div class="card-body"><strong>Active SLA</strong><h3>{{ sla_instance_counts.get('ACTIVE', 0) }}</h3></div></div></div>
+  <div class="col-md-4"><div class="card border-warning"><div class="card-body"><strong>At Risk</strong><h3>{{ sla_instance_counts.get('AT_RISK', 0) }}</h3></div></div></div>
+  <div class="col-md-4"><div class="card border-danger"><div class="card-body"><strong>Breached</strong><h3>{{ sla_instance_counts.get('BREACHED', 0) }}</h3></div></div></div>
+</div>
+<div class="row g-2 mb-4">
+  <div class="col-md-3"><div class="card border-danger"><div class="card-body"><strong>Open Escalations</strong><h3>{{ open_escalations }}</h3><a href="/sla/escalation-history">Review</a></div></div></div>
+  <div class="col-md-3"><div class="card border-warning"><div class="card-body"><strong>Pending Exceptions</strong><h3>{{ pending_exceptions }}</h3><a href="/sla/exceptions">Review</a></div></div></div>
+  <div class="col-md-3"><div class="card border-secondary"><div class="card-body"><strong>Notification Issues</strong><h3>{{ notification_failures }}</h3><a href="/sla/notification-queue">Review</a></div></div></div>
+  <div class="col-md-3"><div class="card border-info"><div class="card-body"><strong>Compliance SLAs</strong><h3>{{ compliance_open }}</h3><a href="/sla/reports/instances?department=Compliance">Review</a></div></div></div>
+</div>
+
+<h4>SLA Alerts Table</h4>
+<div class="table-responsive">
+<table class="table table-bordered table-sm">
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Booking ID</th>
+      <th>Company</th>
+      <th>SLA Type</th>
+      <th>Breach Time</th>
+    </tr>
+  </thead>
+  <tbody>
+   {% if vendor_no_alloc > 0 %}<tr><td>1</td><td colspan="3">Vendor SLA breach - {{ vendor_no_alloc }} booking(s)</td><td>Vendor SLA</td></tr>{% endif %}
+   {% if vendor_without_driver > 0 %}<tr><td>2</td><td colspan="3">Driver SLA breach - {{ vendor_without_driver }} booking(s)</td><td>Driver SLA</td></tr>{% endif %}
+   {% if no_ack > 0 %}<tr><td>3</td><td colspan="3">Acknowledgement SLA breach - {{ no_ack }} booking(s)</td><td>Ack SLA</td></tr>{% endif %}
+   {% if vendor_no_alloc == 0 and vendor_without_driver == 0 and no_ack == 0 %}<tr><td colspan="5" class="text-center text-success">No active SLA breaches.</td></tr>{% endif %}
+  </tbody>
+</table>
+</div>
+<h4 class="mt-4">Department SLA Configuration</h4>
+<form method="post" action="/dashboards/sla/settings">
+<div class="table-responsive"><table class="table table-sm table-striped">
+<thead><tr><th>Department</th><th>Vendor Minutes</th><th>Driver Warning</th><th>Driver Reassign</th><th>Acknowledgement</th><th>Updated By</th></tr></thead>
+<tbody>{% for s in sla_settings %}<tr>
+  <td><input type="hidden" name="department" value="{{ s.department }}">{{ s.department }}</td>
+  <td><input name="vendor_{{ s.department }}" type="number" min="1" class="form-control form-control-sm" value="{{ s.vendor_minutes }}"></td>
+  <td><input name="warning_{{ s.department }}" type="number" min="1" class="form-control form-control-sm" value="{{ s.driver_warning_minutes }}"></td>
+  <td><input name="reassign_{{ s.department }}" type="number" min="1" class="form-control form-control-sm" value="{{ s.driver_reassign_minutes }}"></td>
+  <td><input name="ack_{{ s.department }}" type="number" min="1" class="form-control form-control-sm" value="{{ s.acknowledgement_minutes }}"></td>
+  <td>{{ s.updated_by or '-' }}</td>
+</tr>{% endfor %}</tbody>
+</table></div>
+<button class="btn btn-primary">Save Department SLA Settings</button>
+</form>
+<script>
+  window.setInterval(function () { window.location.reload(); }, 60000);
+</script>
+{% endblock %}

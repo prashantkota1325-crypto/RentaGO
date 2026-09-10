@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}Approve Users{% endblock %}
+{% block content %}
+<h4 class="mb-3">Registration Approvals</h4>
+
+{% if request.query_params.get("approved") %}
+<div class="alert alert-success">User approved.</div>
+{% elif request.query_params.get("rejected") %}
+<div class="alert alert-info">User rejected.</div>
+{% endif %}
+
+{% if request.query_params.get("otp") %}
+<div class="alert alert-warning">
+  <strong>Reset OTP for {{ request.query_params.get("for") }}:</strong>
+  <span class="fs-4 font-monospace">{{ request.query_params.get("otp") }}</span>
+  <br>Relay it to the user now (valid 15 minutes). It is recorded in the OTP Log.
+</div>
+{% endif %}
+
+{% if pending %}
+<div class="table-responsive">
+  <table class="table table-sm table-bordered align-middle bg-white">
+    <thead class="table-light">
+      <tr>
+        <th>User ID</th><th>Name</th><th>Email</th><th>Mobile</th>
+        <th>Company</th><th>Requested Role</th><th>Registered</th><th>Status</th>
+        <th style="width:330px">Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in pending %}
+      <tr>
+        <td>{{ p.user_id }}</td>
+        <td>{{ p.name }}</td>
+        <td>{{ p.email }}</td>
+        <td>{{ p.mobile }}</td>
+        <td>{{ p.company }}</td>
+        <td>{{ p.requested_role }}</td>
+        <td>{{ p.created_dt }}</td>
+        <td>
+          {% if p.status == 'Pending' %}
+          <span class="badge bg-warning text-dark">Pending</span>
+          {% else %}
+          <span class="badge bg-danger">Rejected</span>
+          {% endif %}
+        </td>
+        <td>
+          <div class="d-flex gap-2 align-items-center">
+            <form method="post" action="/auth/approve/{{ p.user_id }}" class="d-flex gap-1 flex-grow-1">
+              <select name="role" class="form-select form-select-sm" style="width:auto">
+                <option value="{{ p.requested_role }}" selected>{{ p.requested_role }}</option>
+                <option value="Sales">Sales</option>
+                <option value="Operations">Operations</option>
+                <option value="Finance">Finance</option>
+                <option value="Vendor Manager">Vendor Manager</option>
+                <option value="HR">HR</option>
+                <option value="Customer Service">Customer Service</option>
+                <option value="Compliance">Compliance</option>
+                <option value="Corporate Admin">Corporate Admin</option>
+                <option value="Vendor">Vendor</option>
+                <option value="Driver">Driver</option>
+                <option value="Investor">Investor</option>
+              </select>
+              <button class="btn btn-sm btn-success" type="submit">Approve</button>
+            </form>
+            <form method="post" action="/auth/reject/{{ p.user_id }}" class="d-flex gap-1">
+              <input name="reason" class="form-control form-control-sm" placeholder="Reason (optional)" style="width:110px">
+              <button class="btn btn-sm btn-outline-danger" type="submit">Reject</button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="alert alert-info">No pending registrations.</div>
+{% endif %}
+
+<h4 class="mb-3 mt-4">Active Users &mdash; Reset Password (OTP)</h4>
+<div class="table-responsive">
+  <table class="table table-sm table-bordered align-middle bg-white">
+    <thead class="table-light">
+      <tr>
+        <th>User ID</th><th>Name</th><th>Email</th><th>Mobile</th>
+        <th>Company</th><th>Role</th><th style="width:190px">Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for u in active_users %}
+      <tr>
+        <td>{{ u.user_id }}</td>
+        <td>{{ u.name }}</td>
+        <td>{{ u.email }}</td>
+        <td>{{ u.mobile }}</td>
+        <td>{{ u.company }}</td>
+        <td>{{ u.role }}</td>
+        <td>
+          <form method="post" action="/auth/generate-otp/{{ u.user_id }}"
+                onsubmit="return confirm('Generate a password-reset OTP for {{ u.user_id }}?');">
+            <button class="btn btn-sm btn-outline-warning" type="submit">Generate Reset OTP</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="text-muted">No active users.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

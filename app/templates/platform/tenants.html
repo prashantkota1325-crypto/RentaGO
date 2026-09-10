@@ -1,0 +1,14 @@
+{% extends "base.html" %}{% block title %}Platform Tenants{% endblock %}{% block content %}
+<h2>RentaGO Platform Tenants</h2>
+<p class="text-muted">Super Admin only. Tenant lifecycle actions are audited.</p>
+<form method="post" class="card my-3"><div class="card-body row g-2">
+  <div class="col-md-2"><input name="tenant_code" class="form-control" placeholder="Tenant Code" required></div>
+  <div class="col-md-3"><input name="legal_name" class="form-control" placeholder="Legal Name" required></div>
+  <div class="col-md-2"><input name="display_name" class="form-control" placeholder="Display Name" required></div>
+  <div class="col-md-2"><input name="plan_code" class="form-control" value="STARTER"></div>
+  <div class="col-md-2"><input name="timezone" class="form-control" value="Asia/Kolkata"></div>
+  <div class="col-md-1"><button class="btn btn-primary">Create</button></div>
+</div></form>
+<div class="table-responsive"><table class="table table-sm table-striped"><thead><tr><th>Code</th><th>Legal Name</th><th>Display</th><th>Status</th><th>Plan</th><th>Subscription</th><th>Created</th><th>Actions</th></tr></thead><tbody>
+{% for t in rows %}<tr><td>{{ t.code }}<br><small>{{ t.tenant_id }}</small></td><td>{{ t.legal_name }}</td><td>{{ t.display_name }}</td><td>{{ t.status }}</td><td>{{ t.plan }}</td><td>{{ t.subscription }}</td><td>{{ t.created_at }}</td><td>{% if t.status != 'ACTIVE' %}<form method="post" action="/platform/tenants/{{ t.tenant_id }}/activate" class="d-inline"><button class="btn btn-sm btn-success">Activate</button></form>{% endif %}{% if t.status == 'ACTIVE' %}<form method="post" action="/platform/tenants/{{ t.tenant_id }}/suspend" class="d-inline"><button class="btn btn-sm btn-outline-danger">Suspend</button></form>{% endif %}</td></tr>{% else %}<tr><td colspan="8">No tenants configured.</td></tr>{% endfor %}
+</tbody></table></div>{% endblock %}

@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Dashboards{% endblock %}
+{% block content %}
+<h2>Dashboards</h2>
+<p class="text-muted">All RentaGO dashboards (Super Admin view).</p>
+<div class="row mt-4">
+<div class="col-md-4 mb-3"><a href="/dashboards/sla" class="text-decoration-none">
+    <div class="card text-center h-100"><div class="card-body">
+      <h5>SLA Dashboard</h5><p class="text-muted mb-0">Super Admin SLA configuration & monitoring</p>
+    </div></div></a></div>
+  <div class="col-md-4 mb-3"><a href="/dashboards/ops" class="text-decoration-none">
+    <div class="card text-center h-100"><div class="card-body">
+      <h5>Operations</h5><p class="text-muted mb-0">Live booking board &amp; SLA alerts</p>
+    </div></div></a></div>
+  <div class="col-md-4 mb-3"><a href="/dashboards/sales" class="text-decoration-none">
+    <div class="card text-center h-100"><div class="card-body">
+      <h5>Sales</h5><p class="text-muted mb-0">Leads funnel &amp; conversion</p>
+    </div></div></a></div>
+  <div class="col-md-4 mb-3"><a href="/dashboards/finance" class="text-decoration-none">
+    <div class="card text-center h-100"><div class="card-body">
+      <h5>Finance</h5><p class="text-muted mb-0">Receivables, revenue &amp; collections</p>
+    </div></div></a></div>
+  <div class="col-md-4 mb-3"><a href="/dashboards/vendor" class="text-decoration-none">
+    <div class="card text-center h-100"><div class="card-body">
+      <h5>Vendor</h5><p class="text-muted mb-0">Vendor performance &amp; grades</p>
+    </div></div></a></div>
+  <div class="col-md-4 mb-3"><a href="/dashboards/customer360" class="text-decoration-none">
+    <div class="card text-center h-100"><div class="card-body">
+      <h5>Customer 360</h5><p class="text-muted mb-0">Per-company bookings &amp; spend</p>
+    </div></div></a></div>
+  <div class="col-md-4 mb-3"><a href="/dashboards/investor" class="text-decoration-none">
+    <div class="card text-center h-100"><div class="card-body">
+      <h5>Investor MIS</h5><p class="text-muted mb-0">Monthly management report</p>
+    </div></div></a></div>
+  <div class="col-md-4 mb-3"><a href="/dashboards/compliance" class="text-decoration-none">
+    <div class="card text-center h-100"><div class="card-body">
+      <h5>Compliance</h5><p class="text-muted mb-0">Document &amp; expiry alerts</p>
+    </div></div></a></div>
+  <div class="col-md-4 mb-3"><a href="/dashboards/tracking" class="text-decoration-none">
+    <div class="card text-center h-100"><div class="card-body">
+      <h5>Tracking</h5><p class="text-muted mb-0">Live trips on map</p>
+    </div></div></a></div>
+</div>
+{% endblock %}
