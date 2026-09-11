@@ -31,6 +31,9 @@ def vendor_compliance(request: Request, vendor_id: str = ""):
     user = current_user(request)
     if not user or module_level(user, "Reports") is None:
         return RedirectResponse(url="/home?msg=access-denied", status_code=303)
+    role = (user.get("role") or "").strip().lower()
+    if role in {"corporate admin", "corporate booking user", "corporate manager", "corporate viewer", "guest", "driver"}:
+        return RedirectResponse(url="/home?msg=access-denied", status_code=303)
     is_vendor = (user.get("role") or "").strip().lower() in {"vendor", "vendor admin", "vendor operations", "vendor viewer"}
     conn = get_connection()
     cur = conn.cursor()

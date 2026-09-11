@@ -31,19 +31,35 @@ def list_notifications(request: Request, event: str = "", status: str = ""):
     cur = conn.cursor()
     sql = (
         "SELECT notification_id, event, channel, booking_id, recipient_name, "
-        "recipient_email, recipient_phone, subject, link, status, created_dt "
-        "FROM notifications"
+        "recipient_email, recipient_phone, subject, link, status, created_dt, created_by "
+        "FROM notifications n"
     )
     params, conds = [], []
+    role = (user.get("role") or "").strip().lower()
+    if role in {"corporate admin", "corporate booking user", "corporate manager", "corporate viewer"}:
+        tenant_id = str(user.get("tenant_id") or "").strip()
+        user_id = str(user.get("user_id") or "").strip()
+        email = str(user.get("email") or "").strip().lower()
+        # Fail closed when the authenticated session has no unambiguous tenant.
+        if not tenant_id or not user_id:
+            conn.close()
+            return templates.TemplateResponse(
+                "notifications/list.html",
+                {"request": request, "user": user, "notifications": [],
+                 "event_filter": event, "status_filter": status},
+            )
+        params.extend([tenant_id, user_id, email])
+        conds.append("n.tenant_id = :1")
+        conds.append("(UPPER(n.created_by) = UPPER(:2) OR UPPER(n.recipient_email) = UPPER(:3))")
     if event:
         params.append("%" + event + "%")
-        conds.append("LOWER(event) LIKE LOWER(:" + str(len(params)) + ")")
+        conds.append("LOWER(n.event) LIKE LOWER(:" + str(len(params)) + ")")
     if status:
         params.append("%" + status + "%")
-        conds.append("LOWER(status) LIKE LOWER(:" + str(len(params)) + ")")
+        conds.append("LOWER(n.status) LIKE LOWER(:" + str(len(params)) + ")")
     if conds:
         sql += " WHERE " + " AND ".join(conds)
-    sql += " ORDER BY notification_id DESC FETCH FIRST 300 ROWS ONLY"
+    sql += " ORDER BY n.notification_id DESC FETCH FIRST 300 ROWS ONLY"
     cur.execute(sql, params)
     rows = cur.fetchall()
 
@@ -58,7 +74,7 @@ def list_notifications(request: Request, event: str = "", status: str = ""):
         "notification_id": r[0], "event": r[1], "channel": r[2],
         "booking_id": r[3], "recipient_name": r[4], "recipient_email": r[5],
         "recipient_phone": r[6], "subject": r[7], "link": r[8],
-        "status": r[9], "created_dt": r[10],
+        "status": r[9], "created_dt": r[10], "created_by": r[11],
     } for r in rows]
     return templates.TemplateResponse(
         "notifications/list.html",
