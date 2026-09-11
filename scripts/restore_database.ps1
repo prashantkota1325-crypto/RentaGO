@@ -23,8 +23,9 @@ $temp = Join-Path $env:TEMP "rentago_restore_$stamp"
 $parfile = Join-Path $env:TEMP "rentago_restore_$stamp.par"
 $dump = Join-Path $temp "rentago_*.dmp"
 $admin = "RGRESTORE_TEST"
-$adminPassword = "RestoreDba2026X"
+$adminPassword = [guid]::NewGuid().ToString("N")
 $target = "RENTAGO_RESTORE_TEST"
+$targetPassword = [guid]::NewGuid().ToString("N")
 $passed = $false
 New-Item -ItemType Directory -Path $temp -Force | Out-Null
 try {
@@ -43,7 +44,7 @@ BEGIN EXECUTE IMMEDIATE 'DROP USER $target CASCADE'; EXCEPTION WHEN OTHERS THEN 
 CREATE USER $admin IDENTIFIED BY "$adminPassword";
 GRANT CREATE SESSION, RESOURCE, DATAPUMP_IMP_FULL_DATABASE TO $admin;
 ALTER USER $admin QUOTA UNLIMITED ON USERS;
-CREATE USER $target IDENTIFIED BY "Restore_Test_Only_2026";
+CREATE USER $target IDENTIFIED BY "$targetPassword";
 GRANT CREATE SESSION, RESOURCE TO $target;
 ALTER USER $target QUOTA UNLIMITED ON USERS;
 SELECT username FROM dba_users WHERE username IN ('$admin', '$target');

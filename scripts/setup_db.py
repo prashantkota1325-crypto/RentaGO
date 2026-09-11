@@ -28,10 +28,9 @@ APP_PWD = settings.DB_PASSWORD
 
 def main():
     admin_user = os.environ.get("RENTAGO_ADMIN_USER", "SYSTEM")
-    admin_pwd = os.environ.get("RENTAGO_ADMIN_PASSWORD", "")
+    admin_pwd = os.environ.get("RENTAGO_ADMIN_PASSWORD", "").strip()
     if not admin_pwd:
-        print("No RENTAGO_ADMIN_PASSWORD set; using 'oracle'. Set it in .env to avoid surprises.")
-        admin_pwd = "oracle"
+        raise RuntimeError("RENTAGO_ADMIN_PASSWORD must be configured before database setup.")
 
     oracledb.init_oracle_client(lib_dir=os.environ.get("RENTAGO_ORACLE_CLIENT"))
     print(f"Connecting as {admin_user} to {settings.admin_dsn} ...")

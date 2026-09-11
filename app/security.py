@@ -34,7 +34,7 @@ def verify_password(password: str, stored: str | None) -> bool:
     
     The stored string can be in either of two formats:
     1. '<salt>:<hash>' - the VBA salted hash format (has colon)
-    2. Plain password - legacy vault format (no colon, e.g., 'Samika@0108')
+    2. Plain password - legacy vault format (no colon; legacy data only)
     
     If the stored string contains a colon, it's treated as format 1.
     Otherwise, it's treated as a plain password to compare directly.

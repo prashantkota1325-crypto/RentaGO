@@ -317,7 +317,9 @@ def get_admin_connection():
     if not HAS_NATIVE:
         raise RuntimeError("Native oracledb required for admin connection.")
     user = os.environ.get("RENTAGO_ADMIN_USER", "SYSTEM")
-    pwd = os.environ.get("RENTAGO_ADMIN_PASSWORD", "oracle")
+    pwd = os.environ.get("RENTAGO_ADMIN_PASSWORD", "").strip()
+    if not pwd:
+        raise RuntimeError("RENTAGO_ADMIN_PASSWORD must be configured for admin connection.")
     return _oracledb.connect(user=user, password=pwd, dsn=settings.admin_dsn)
 
 

@@ -8,8 +8,8 @@ invoice, payments list, dashboards, SLA check.
 Usage:
     python tests/smoke_test.py [base_url] [user_id] [password]
 
-Defaults: http://127.0.0.1:8000 with the credentials below (create them via
-scripts/seed_admin.py --user-id smoketest --password Smoke@Test1 first).
+Defaults: http://127.0.0.1:8000. Supply a test user ID and password explicitly
+(create the test user with scripts/seed_admin.py before running this test).
 """
 
 import re
@@ -19,8 +19,8 @@ import urllib.parse
 import http.cookiejar
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8000"
-USER = sys.argv[2] if len(sys.argv) > 2 else "smoketest"
-PASSWORD = sys.argv[3] if len(sys.argv) > 3 else "Smoke@Test1"
+USER = sys.argv[2] if len(sys.argv) > 2 else ""
+PASSWORD = sys.argv[3] if len(sys.argv) > 3 else ""
 
 jar = http.cookiejar.CookieJar()
 opener = urllib.request.build_opener(
@@ -52,6 +52,9 @@ def post(path, data):
 
 
 def main():
+    if not USER or not PASSWORD:
+        print("Usage: python tests/smoke_test.py [base_url] [test_user] [test_password]")
+        sys.exit(2)
     print(f"Smoke test against {BASE} as {USER}")
 
     # --- auth ---
