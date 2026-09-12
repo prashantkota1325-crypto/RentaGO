@@ -77,6 +77,22 @@ def _cache_put(key, value):
         _cache[key] = (time.monotonic(), value)
 
 
+def _refresh_cached_tenant(user, conn):
+    """Copy cached user data and refresh its current unambiguous tenant."""
+    refreshed = dict(user)
+    refreshed.pop("tenant_id", None)
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT tenant_id FROM tenant_memberships "
+        "WHERE UPPER(user_id)=UPPER(:1) AND status='ACTIVE'",
+        (refreshed.get("user_id"),),
+    )
+    memberships = [r[0] for r in cur.fetchall()]
+    if len(memberships) == 1:
+        refreshed["tenant_id"] = memberships[0]
+    return refreshed
+
+
 def current_user(request: Request):
     """Return a user dict (or None) for the current session.
 
@@ -92,6 +108,8 @@ def current_user(request: Request):
     uid, sid = parsed
     if not uid:
         return None
+    session_mobile_booking_id = None
+    session_mobile_expires_at = None
     if sid:
         ok = _cache_get(("sess", sid), 30)
         if ok is None:
@@ -120,6 +138,8 @@ def current_user(request: Request):
             role = (activity[1] or "").strip().lower()
             mobile_booking_id = activity[2]
             mobile_expires_at = _parse_oracle_dt(activity[3]) if activity[3] else None
+            session_mobile_booking_id = mobile_booking_id
+            session_mobile_expires_at = mobile_expires_at
             if mobile_booking_id and not mobile_expires_at:
                 cur.execute("SELECT status_reason FROM bookings WHERE booking_id=:1", (mobile_booking_id,))
                 booking_state = cur.fetchone()
@@ -127,6 +147,7 @@ def current_user(request: Request):
                     cur.execute("UPDATE user_sessions SET mobile_expires_at=SYSDATE+(10/1440) WHERE session_id=:1", (sid,))
                     conn.commit()
                     mobile_expires_at = datetime.now() + timedelta(minutes=10)
+                    session_mobile_expires_at = mobile_expires_at
             if mobile_expires_at and datetime.now() >= mobile_expires_at:
                 cur.execute("DELETE FROM user_sessions WHERE session_id=:1", (sid,))
                 conn.commit(); conn.close(); invalidate_session_cache(sid); return None
@@ -146,39 +167,47 @@ def current_user(request: Request):
         conn.close()
     cached = _cache_get(("user", uid), 60)
     if cached is not None:
-        return cached
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT user_id, user_id, name, email, company_name, role, emp_id, mobile, "
-        "organization_id, organization_type, platform_owner "
-        "FROM users WHERE UPPER(user_id)=UPPER(:1) AND status='Active'",
-        (uid,),
-    )
-    row = cur.fetchone()
-    if not row:
-        return None
-    user = {
-        "user_no": row[0],
-        "user_id": row[1],
-        "name": row[2],
-        "email": row[3],
-        "company": row[4],
-        "company_name": row[4],
-        "role": row[5],
-        "emp_id": row[6],
-        "mobile": row[7],
-        "organization_id": row[8],
-        "organization_type": row[9],
-        "platform_owner": row[10],
-    }
-    tcur = conn.cursor()
-    tcur.execute("SELECT tenant_id FROM tenant_memberships WHERE UPPER(user_id)=UPPER(:1) AND status='ACTIVE'", (uid,))
-    memberships = [r[0] for r in tcur.fetchall()]
-    if len(memberships) == 1:
-        user["tenant_id"] = memberships[0]
-    conn.close()
-    _cache_put(("user", uid), user)
+        conn = get_connection()
+        try:
+            user = _refresh_cached_tenant(cached, conn)
+        finally:
+            conn.close()
+    else:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT user_id, user_id, name, email, company_name, role, emp_id, mobile, "
+            "organization_id, organization_type, platform_owner "
+            "FROM users WHERE UPPER(user_id)=UPPER(:1) AND status='Active'",
+            (uid,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        user = {
+            "user_no": row[0],
+            "user_id": row[1],
+            "name": row[2],
+            "email": row[3],
+            "company": row[4],
+            "company_name": row[4],
+            "role": row[5],
+            "emp_id": row[6],
+            "mobile": row[7],
+            "organization_id": row[8],
+            "organization_type": row[9],
+            "platform_owner": row[10],
+        }
+        tcur = conn.cursor()
+        tcur.execute("SELECT tenant_id FROM tenant_memberships WHERE UPPER(user_id)=UPPER(:1) AND status='ACTIVE'", (uid,))
+        memberships = [r[0] for r in tcur.fetchall()]
+        if len(memberships) == 1:
+            user["tenant_id"] = memberships[0]
+        conn.close()
+        _cache_put(("user", uid), dict(user))
+    # Session-specific booking context must not be stored in the per-user cache.
+    user["mobile_booking_id"] = session_mobile_booking_id
+    user["mobile_expires_at"] = session_mobile_expires_at
     return user
 
 

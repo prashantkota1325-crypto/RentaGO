@@ -66,15 +66,25 @@ def mobile_login(request: Request, who: str, identity: str = Form(...), booking_
         conn.close(); return RedirectResponse(f"/mobile/{who}-login?msg=locked", status_code=303)
     user_row = find_mobile_user(cur, identity, who)
     cur.execute("SELECT * FROM bookings WHERE booking_id=:1", (booking_id.strip(),)); booking_row = cur.fetchone()
-    user_ok = bool(user_row and pin_matches(pin, user_row[5]))
+    booking_cols = [d[0].lower() for d in cur.description] if booking_row else []
+    tenant_id = None
+    if user_row:
+        cur.execute("SELECT tenant_id FROM tenant_memberships WHERE UPPER(user_id)=UPPER(:1) AND status='ACTIVE'", (user_row[0],))
+        memberships = [r[0] for r in cur.fetchall()]
+        if len(memberships) == 1:
+            tenant_id = memberships[0]
+    user_ok = bool(user_row and pin_matches(pin, user_row[6]))
     booking = None
     if booking_row:
-        cols = [d[0].lower() for d in cur.description]; booking = dict(zip(cols, booking_row))
+        booking = dict(zip(booking_cols, booking_row))
     assigned = False
-    if booking and user_row:
+    if booking and user_row and tenant_id and str(booking.get("tenant_id") or "") == str(tenant_id):
         if who == "guest":
-            assigned = (str(user_row[1] or "").strip().lower() == str(booking.get("guest_name_1") or "").strip().lower() or
-                        str(user_row[3] or "").replace(" ", "") == str(booking.get("guest_contact") or "").replace(" ", ""))
+            linked = str(user_row[5] or "").strip().lower()
+            assigned = bool((linked and linked == str(booking.get("emp_guest_id") or "").strip().lower()) or
+                        (not linked and (
+                         str(user_row[1] or "").strip().lower() == str(booking.get("guest_name_1") or "").strip().lower() or
+                         str(user_row[3] or "").replace(" ", "") == str(booking.get("guest_contact") or "").replace(" ", ""))))
         else:
             assigned = (str(user_row[1] or "").strip().lower() == str(booking.get("driver_name") or "").strip().lower() or
                         str(user_row[3] or "").replace(" ", "") == str(booking.get("driver_contact") or "").replace(" ", ""))

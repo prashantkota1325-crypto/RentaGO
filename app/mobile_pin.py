@@ -22,7 +22,7 @@ def pin_matches(pin, stored_hash):
 
 def find_mobile_user(cur, identity, role):
     cur.execute(
-        "SELECT user_id,name,email,mobile,role,mobile_pin_hash,status FROM users "
+        "SELECT user_id,name,email,mobile,role,emp_id,mobile_pin_hash,status FROM users "
         "WHERE status='Active' AND LOWER(role)=LOWER(:1) "
         "AND (UPPER(user_id)=UPPER(:2) OR REPLACE(mobile,' ','')=REPLACE(:2,' ',''))",
         (role, identity.strip()),
