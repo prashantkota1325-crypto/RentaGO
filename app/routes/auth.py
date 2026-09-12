@@ -821,7 +821,7 @@ def user_edit_page(request: Request, user_id: str):
     conn = get_connection()
     cur = conn.cursor()
     cur.execute(
-        "SELECT user_id, name, email, mobile, company_name, role, status "
+        "SELECT user_id, name, email, mobile, company_name, role, status, emp_id "
         "FROM users WHERE UPPER(user_id)=UPPER(:1) AND ROWNUM=1", (user_id,)
     )
     row = cur.fetchone()
@@ -829,7 +829,7 @@ def user_edit_page(request: Request, user_id: str):
     if not row:
         return RedirectResponse(url="/auth/users?msg=not-found", status_code=303)
     rec = {"user_id": row[0], "name": row[1], "email": row[2], "mobile": row[3],
-           "company_name": row[4], "role": row[5], "status": row[6]}
+           "company_name": row[4], "role": row[5], "status": row[6], "emp_id": row[7]}
     companies, vendors, individuals = _user_organizations()
     return templates.TemplateResponse(
         "user_form.html",
