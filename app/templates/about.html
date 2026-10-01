@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% set product = product_branding() %}
+{% block title %}About {{ product.name }}{% endblock %}
+{% block content %}
+<div class="card shadow-sm mx-auto" style="max-width: 680px;">
+  <div class="card-body text-center py-5">
+    <img src="/static/img/rentago-logo.svg" alt="{{ product.name }}" style="max-width:260px; height:auto">
+    <h1 class="h3 mt-4">{{ product.name }}</h1>
+    <p class="text-muted">Corporate Mobility &amp; Chauffeur-Driven Car Rental Platform</p>
+    <hr>
+    <p class="mb-1">{{ product.attribution }}</p>
+    <p class="mb-1">Founder / Product Architect</p>
+    <p class="mb-3">{{ product.company }}</p>
+    <p class="small text-muted mb-0">{{ product.copyright }}<br>{{ product.rights }}</p>
+  </div>
+</div>
+{% endblock %}

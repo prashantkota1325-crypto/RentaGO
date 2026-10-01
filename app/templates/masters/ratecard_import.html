@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Individual Rate Chart Import{% endblock %}
+{% block content %}
+<h2>Individual Rate Chart Import</h2>
+<p class="text-muted">Use the same canonical headers as the Company Rate Chart. Vendor uploads use the <strong>Unique Vendors</strong> format. Validation completes before any rows are committed.</p>
+{% if message %}<div class="alert alert-{{ 'success' if not errors else 'warning' }}">{{ message }}{% if row_count is defined %} ({{ row_count }} rows){% endif %}</div>{% endif %}
+{% if errors %}<div class="alert alert-danger"><strong>Import rejected.</strong><ul>{% for error in errors[:100] %}<li>Row {{ error.row }}, {{ error.column }}: {{ error.code }} — {{ error.message }}</li>{% endfor %}</ul></div>{% endif %}
+<form method="post" enctype="multipart/form-data" class="card p-4" style="max-width:760px">
+  <label class="form-label">Owner Type</label><select name="owner_type" class="form-select mb-3"><option value="VENDOR" {% if owner_type == 'VENDOR' %}selected{% endif %}>Vendor</option><option value="INDIVIDUAL" {% if owner_type == 'INDIVIDUAL' %}selected{% endif %}>Individual Client</option><option value="COMPANY" {% if owner_type == 'COMPANY' %}selected{% endif %}>Company / RentaGO</option></select>
+  <label class="form-label">Owner ID</label><input name="owner_id" class="form-control mb-3" placeholder="Company ID or individual client ID">
+  <label class="form-label">Selected Vendor ID (optional)</label><input name="vendor_id" class="form-control mb-3" placeholder="Used to validate workbook Company Id">
+  <label class="form-label">.xlsx workbook</label><input name="file" type="file" accept=".xlsx" class="form-control mb-3" required>
+  <button class="btn btn-primary">Validate and Import</button>
+</form>
+{% endblock %}

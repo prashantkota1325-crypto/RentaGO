@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Smart Booking Workspace{% endblock %}
+{% block content %}
+<style>
+  .smart-shell { max-width: 1180px; margin: 0 auto; }
+  .smart-hero { background: linear-gradient(135deg,#173b70,#245b8e); color: #fff; border-radius: 14px; padding: 1.4rem 1.6rem; }
+  .smart-card { border: 0; box-shadow: 0 5px 22px rgba(18,45,76,.09); }
+  .smart-results { position: absolute; z-index: 20; width: 100%; max-height: 220px; overflow: auto; }
+  .smart-results button { text-align: left; white-space: normal; }
+  .smart-field { position: relative; }
+  .late-fields { display: none; }
+  body.smart-late .late-fields { display: block; }
+  body.smart-late .normal-only { display: none; }
+</style>
+<div class="smart-shell">
+  <div class="smart-hero mb-4">
+    <div class="d-flex justify-content-between gap-3 align-items-start flex-wrap">
+      <div><div class="small text-uppercase opacity-75">RentaGO Operations</div><h2 class="mb-1">Smart Booking Workspace</h2><p class="mb-0 opacity-75">Search, select, auto-fill, confirm, create.</p></div>
+      <a href="/bookings" class="btn btn-light">Back to Bookings</a>
+    </div>
+  </div>
+  <form id="smartBookingForm" method="post" action="/bookings/create" class="needs-validation" novalidate>
+    <div class="card smart-card mb-3"><div class="card-body">
+      <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+        <div><h5 class="mb-1">Booking Mode</h5><div class="text-muted small">Late mode reuses the existing audited post-trip workflow.</div></div>
+        <div class="btn-group" role="group" aria-label="Booking mode">
+          <input class="btn-check" type="radio" name="smart_mode" id="modeNormal" value="normal" checked>
+          <label class="btn btn-outline-primary" for="modeNormal">Normal Booking</label>
+          {% if late_entry_allowed %}<input class="btn-check" type="radio" name="smart_mode" id="modeLate" value="late"><label class="btn btn-outline-danger" for="modeLate">Late / Post-Trip Entry</label>{% endif %}
+        </div>
+      </div>
+      {% if not late_entry_allowed %}<div class="normal-only alert alert-secondary py-2">Late/post-trip entry requires internal RentaGO Booking permission.</div>{% endif %}
+      <div id="lateWarning" class="alert alert-warning late-fields"><strong>Late entry:</strong> actual trip timestamps remain separate from the server booking punch time. <div class="mt-2"><label class="me-3"><input type="radio" name="late_entry_type" value="HISTORICAL_POST_TRIP" checked> Historical / Post-Trip</label><label><input type="radio" name="late_entry_type" value="CURRENT_TRIP_ACTIVE"> Current Trip / Active Late Entry</label></div></div>
+      <div class="row g-3">
+        <div class="col-lg-4 smart-field normal-only"><label class="form-label" for="companySearch">Corporate</label><input id="companySearch" name="company_name" class="form-control" autocomplete="off" placeholder="Search corporate..."><input id="companyId" name="company_id" type="hidden"><div id="companyResults" class="list-group smart-results"></div></div>
+        <div class="col-lg-4 normal-only"><label class="form-label" for="entityName">Billing Entity</label><select id="entityName" name="entity_name" class="form-select" required><option value="">Select corporate first</option></select><div id="entityMeta" class="form-text">Select a corporate to load all billing entities.</div></div>
+        <div class="col-lg-4"><label class="form-label" for="guestSearch">Guest *</label><div class="smart-field"><input id="guestSearch" name="guest_name" class="form-control" autocomplete="off" required placeholder="Search name, mobile, or email..."><div id="guestResults" class="list-group smart-results"></div></div><input id="guestId" name="emp_guest_id" type="hidden"></div>
+        <div class="col-md-4"><label class="form-label">Guest Mobile</label><input id="guestContact" name="guest_contact" class="form-control"></div>
+        <div class="col-md-4"><label class="form-label">Guest Email</label><input id="guestEmail" name="guest_email" type="email" class="form-control"></div>
+        <div class="col-md-4 normal-only"><label class="form-label">Booking Type</label><select name="booking_type" class="form-select"><option>Corporate</option><option>Corporate Event</option><option>Employee Transport</option><option>Individual</option><option>Individual Event</option></select></div>
+      </div>
+      <div class="row g-2 mt-3 small">
+        <div class="col-md-3"><strong>Contract</strong><div class="text-muted">Not available in current preview</div></div>
+        <div class="col-md-3"><strong>Payment Terms</strong><div class="text-muted">From corporate profile when configured</div></div>
+        <div class="col-md-3"><strong>SLA</strong><div class="text-muted">Not available in current preview</div></div>
+        <div class="col-md-3"><strong>Cancellation</strong><div class="text-muted">Existing booking policy applies</div></div>
+      </div>
+    </div></div>
+
+    <div class="card smart-card mb-3"><div class="card-body"><div class="d-flex justify-content-between align-items-center mb-3"><h5 class="mb-0">Trip Details</h5><button type="button" id="locationSearch" class="btn btn-sm btn-outline-secondary">Find pickup on map</button></div>
+      <div class="row g-3">
+        <div class="col-lg-6"><label class="form-label">Pickup Address *</label><input id="pickupAddress" name="pickup_address" class="form-control" required></div>
+        <div class="col-md-3"><label class="form-label">Pickup City</label><input id="pickupCity" name="pickup_city" class="form-control"></div>
+        <div class="col-md-3"><label class="form-label">Pickup State</label><input name="pickup_state" class="form-control"></div>
+        <div class="col-lg-6"><label class="form-label">Drop Address *</label><input name="drop_address" class="form-control" required></div>
+        <div class="col-md-3"><label class="form-label">Drop City</label><input name="drop_city" class="form-control"></div>
+        <div class="col-md-3"><label class="form-label">Drop State</label><input name="drop_state" class="form-control"></div>
+        <div class="col-md-3"><label class="form-label">Pickup Date *</label><input id="pickupDate" name="pickup_date" type="date" class="form-control" required></div>
+        <div class="col-md-3"><label class="form-label">Pickup Time *</label><input id="pickupTime" name="pickup_time" type="time" class="form-control" required></div>
+        <div class="col-md-3"><label class="form-label">Drop Date *</label><input id="dropDate" name="drop_date" type="date" class="form-control" required></div>
+        <div class="col-md-3"><label class="form-label">Drop Time *</label><input id="dropTime" name="drop_time" type="time" class="form-control" required></div>
+        <div class="col-md-4"><label class="form-label">Service</label><select name="package_type" class="form-select"><option value="">Auto / Select</option><option>Airport Transfer</option><option>Point-to-Point</option><option>Local</option><option>Outstation</option><option>Full Day</option></select></div>
+        <div class="col-md-4"><label class="form-label">Vehicle Category</label><input id="vehicleType" name="vehicle_type" class="form-control" placeholder="Sedan, SUV..."><div id="rateMeta" class="form-text">Rate is calculated by the existing server rate-card logic.</div></div>
+        <div class="col-md-4"><label class="form-label">Flight / Reference</label><input name="flight_details" class="form-control"></div>
+      </div>
+    </div></div>
+
+    <div class="card smart-card mb-3 late-fields"><div class="card-body"><h5>Historical Allocation</h5><div class="row g-3">
+      <div class="col-md-4 smart-field"><label class="form-label">Vendor *</label><input id="vendorName" name="vendor_name" class="form-control" autocomplete="off"><div id="vendorResults" class="list-group smart-results"></div></div>
+      <div class="col-md-4 smart-field"><label class="form-label">Driver *</label><input id="driverName" name="driver_name" class="form-control" autocomplete="off"><div id="driverResults" class="list-group smart-results"></div></div>
+      <div class="col-md-4 smart-field"><label class="form-label">Vehicle *</label><input id="vehicleNo" name="vehicle_no" class="form-control" autocomplete="off"><div id="vehicleResults" class="list-group smart-results"></div></div>
+      <div class="col-md-4"><label class="form-label">Starting Odometer (Active Trip)</label><input id="activeStartKm" name="pickup_start_km" type="number" min="0" step="0.1" class="form-control"></div>
+      <div class="col-md-8"><label class="form-label">Late Entry Reason *</label><select name="reason" class="form-select" required><option value="">Select reason</option><option>SYSTEM_OUTAGE</option><option>NETWORK_OUTAGE</option><option>OPERATIONAL_EMERGENCY</option><option>MANUAL_POST_TRIP_ENTRY</option><option>OTHER</option></select></div>
+      <div class="col-12"><label class="form-label">Late Entry Remarks</label><textarea name="late_entry_remarks" maxlength="1000" class="form-control"></textarea></div>
+    </div></div></div>
+
+    <div id="duplicateAlert" class="alert alert-warning d-none"></div>
+    <div class="card smart-card mb-3"><div class="card-body d-flex justify-content-between align-items-center flex-wrap gap-2"><div><h5 class="mb-1">Commercial Summary</h5><div id="rateSummary" class="text-muted">Select a vehicle category to preview the existing server rate-card result.</div><div class="small mt-2"><span class="me-3">Taxes: Calculated during confirmation</span><span class="me-3">Additional charges: Calculated during confirmation</span><span>Total: Server-authoritative at confirmation</span></div></div><div class="d-flex gap-2"><button type="button" id="repeatButton" class="btn btn-outline-secondary">Repeat Previous</button><button class="btn btn-primary" type="submit">Create Booking</button></div></div></div>
+  </form>
+</div>
+<script>
+(function () {
+  const form = document.getElementById('smartBookingForm');
+  const late = document.getElementById('modeLate');
+  const lateFields = form.querySelectorAll('.late-fields input, .late-fields select');
+  const setMode = function () { const isLate = late && late.checked; const active = isLate && form.querySelector('input[name="late_entry_type"]:checked')?.value === 'CURRENT_TRIP_ACTIVE'; document.body.classList.toggle('smart-late', !!isLate); form.action = isLate ? '/bookings/late-entry' : '/bookings/create'; lateFields.forEach(function (el) { el.required = !!isLate; }); document.getElementById('dropDate').required = !active; document.getElementById('dropTime').required = !active; document.getElementById('activeStartKm').required = !!active; };
+  document.querySelectorAll('input[name="smart_mode"]').forEach(function (el) { el.addEventListener('change', setMode); }); setMode();
+  document.querySelectorAll('input[name="late_entry_type"]').forEach(function (el) { el.addEventListener('change', setMode); });
+  const debounce = function (fn, wait) { let timer; return function () { clearTimeout(timer); const args = arguments; timer = setTimeout(function () { fn.apply(null, args); }, wait); }; };
+  const loadEntities = function (companyId, selected) { const select = document.getElementById('entityName'); select.innerHTML = '<option value="">Loading billing entities...</option>'; if (!companyId) { select.innerHTML = '<option value="">Select corporate first</option>'; return; } fetch('/bookings/company-entities?company_id=' + encodeURIComponent(companyId)).then(function (r) { return r.json(); }).then(function (items) { select.innerHTML = ''; if (!items.length) { select.innerHTML = '<option value="">No billing entity found</option>'; return; } items.forEach(function (item) { const option = document.createElement('option'); option.value = item.legal_name || ''; option.textContent = (item.legal_name || 'Unnamed entity') + (item.gstin ? ' | GSTIN ' + item.gstin : ''); if (selected && option.value === selected) option.selected = true; select.appendChild(option); }); document.getElementById('entityMeta').textContent = items.length + ' billing entities loaded from Corporate Profile'; }).catch(function () { select.innerHTML = '<option value="">Billing entities unavailable</option>'; }); };
+  const suggest = function (input, target, url, render, choose) { const box = document.getElementById(target); input.addEventListener('input', debounce(function () { const q = input.value.trim(); if (q.length < 2) { box.innerHTML = ''; return; } fetch(url + encodeURIComponent(q)).then(function (r) { return r.json(); }).then(function (items) { box.innerHTML = ''; items.slice(0, 10).forEach(function (item) { const b = document.createElement('button'); b.type = 'button'; b.className = 'list-group-item list-group-item-action'; b.textContent = render(item); b.addEventListener('click', function () { choose(item); box.innerHTML = ''; }); box.appendChild(b); }); }).catch(function () { box.innerHTML = ''; }); }, 250)); };
+  suggest(document.getElementById('companySearch'), 'companyResults', '/bookings/companies?q=', function (x) { return x.company_name + (x.entity ? ' | ' + x.entity : ''); }, function (x) { document.getElementById('companySearch').value = x.company_name; document.getElementById('companyId').value = x.company_id || ''; loadEntities(x.company_id || '', x.entity || ''); });
+  suggest(document.getElementById('guestSearch'), 'guestResults', '/bookings/guests?q=', function (x) { return x.guest_name + ' | ' + (x.mobile || x.email || '') + ' | ' + (x.company || ''); }, function (x) { document.getElementById('guestSearch').value = x.guest_name || ''; document.getElementById('guestId').value = x.identity_id || ''; document.getElementById('guestContact').value = x.mobile || ''; document.getElementById('guestEmail').value = x.email || ''; if (!document.getElementById('companySearch').value) { document.getElementById('companySearch').value = x.company || ''; document.getElementById('companyId').value = x.company_id || ''; loadEntities(x.company_id || '', x.entity || ''); } });
+  suggest(document.getElementById('vendorName'), 'vendorResults', '/bookings/vendors?q=', function (x) { return x.name + ' | ' + (x.contact || ''); }, function (x) { document.getElementById('vendorName').value = x.name || ''; });
+  suggest(document.getElementById('driverName'), 'driverResults', '/bookings/drivers?q=', function (x) { return x.name + ' | ' + (x.mobile || ''); }, function (x) { document.getElementById('driverName').value = x.name || ''; });
+  suggest(document.getElementById('vehicleNo'), 'vehicleResults', '/bookings/vehicles?q=', function (x) { return x.reg + ' | ' + (x.category || ''); }, function (x) { document.getElementById('vehicleNo').value = x.reg || ''; document.getElementById('vehicleType').value = x.category || document.getElementById('vehicleType').value; });
+  const checkDuplicates = debounce(function () { const params = new URLSearchParams({ guest: document.getElementById('guestSearch').value, pickup: document.getElementById('pickupAddress').value, drop: form.elements.drop_address.value, service_date: document.getElementById('pickupDate').value }); fetch('/bookings/smart/duplicates?' + params).then(function (r) { return r.json(); }).then(function (rows) { const box = document.getElementById('duplicateAlert'); if (!rows.length) { box.classList.add('d-none'); return; } box.classList.remove('d-none'); box.textContent = 'Possible duplicate booking: ' + rows.map(function (x) { return x.booking_id; }).join(', ') + '. Review before creating.'; }).catch(function () {}); }, 400);
+  ['guestSearch','pickupAddress','pickupDate'].forEach(function (id) { document.getElementById(id).addEventListener('input', checkDuplicates); }); form.elements.drop_address.addEventListener('input', checkDuplicates);
+  document.getElementById('vehicleType').addEventListener('input', debounce(function () { const p = new URLSearchParams({ company_id: document.getElementById('companyId').value, vehicle_type: this.value }); fetch('/bookings/smart/rate?' + p).then(function (r) { return r.json(); }).then(function (x) { document.getElementById('rateSummary').textContent = 'Server rate-card preview: ' + (x.base_rate || 0) + ' | ' + (x.source || ''); }); }, 300));
+  document.getElementById('locationSearch').addEventListener('click', function () { const q = document.getElementById('pickupAddress').value; if (!q) return; fetch('/bookings/geocode?q=' + encodeURIComponent(q)).then(function (r) { return r.json(); }).then(function (items) { if (items && items[0]) { document.getElementById('pickupAddress').value = items[0].display_name || q; } }); });
+  document.getElementById('repeatButton').addEventListener('click', function () { const id = window.prompt('Previous booking ID'); if (!id) return; fetch('/bookings/smart/repeat/' + encodeURIComponent(id)).then(function (r) { return r.json(); }).then(function (x) { if (x.error) { window.alert(x.error); return; } ['company_name','company_id','guest_name','guest_email','guest_contact','pickup_address','pickup_city','pickup_state','drop_address','drop_city','drop_state','vehicle_type','package_type'].forEach(function (name) { if (form.elements[name] && x[name] != null) form.elements[name].value = x[name]; }); document.getElementById('entityName').dataset.pendingValue = x.entity_name || ''; loadEntities(x.company_id || '', x.entity_name || ''); }); });
+  form.addEventListener('submit', function (e) { if (!form.checkValidity()) { e.preventDefault(); e.stopPropagation(); form.classList.add('was-validated'); } });
+})();
+</script>
+{% endblock %}

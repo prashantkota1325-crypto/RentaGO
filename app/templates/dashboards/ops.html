@@ -65,7 +65,7 @@
         <tr>
           <td><a href="/bookings/{{ b.booking_id }}">{{ b.booking_id }}</a></td>
           <td>{{ b.booking_type }}</td><td>{{ b.company }}</td><td>{{ b.guest }}</td>
-          <td>{{ b.pickup_date }} {{ b.pickup_time }}</td>
+          <td>{{ b.pickup_date|display_date }} {{ b.pickup_time|display_time }}</td>
           <td>{{ b.vendor or '-' }}</td><td>{{ b.driver or '-' }}</td>
           <td><span class="badge bg-warning text-dark">{{ b.reason }}</span></td>
         </tr>
@@ -88,7 +88,7 @@
         <tr>
           <td><a href="/bookings/{{ t.booking_id }}">{{ t.booking_id }}</a></td>
           <td>{{ t.guest }}</td><td>{{ t.driver }}</td><td>{{ t.vehicle }}</td>
-          <td>{{ t.pickup_date }} {{ t.pickup_time }}</td>
+          <td>{{ t.pickup_date|display_date }} {{ t.pickup_time|display_time }}</td>
           <td><span class="badge {% if t.sync == 'SYNCED' %}bg-success{% elif t.sync == 'RED FLAG' %}bg-danger{% else %}bg-secondary{% endif %}">{{ t.sync or '-' }}</span></td>
         </tr>
       {% else %}

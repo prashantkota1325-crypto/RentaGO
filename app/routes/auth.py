@@ -3,8 +3,10 @@
 from datetime import datetime
 from urllib.parse import quote
 import logging
+import os
 import secrets
 import re
+import uuid
 
 from fastapi import APIRouter, Request, Form
 from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
@@ -18,12 +20,18 @@ from ..audit import audit, record_login, record_logout
 from ..config import settings
 from ..device import is_mobile_request
 from ..ids import next_individual_id
-from ..mobile_pin import pin_hash, valid_pin
+from ..mobile_pin import pin_hash, valid_pin, attempt_key
 from ..auth_rate_limit import login_allowed, record_login_attempt
+from ..scope import is_internal_user
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 
 router = APIRouter(prefix="/auth")
 logger = logging.getLogger(__name__)
+
+
+@router.get("/about")
+def about(request: Request):
+    return templates.TemplateResponse("about.html", {"request": request, "user": current_user(request)})
 
 
 def _valid_new_user_id(value):
@@ -35,6 +43,10 @@ def _mfa_serializer():
 
 
 def _needs_email_mfa(role):
+    if (settings.ENVIRONMENT != "production"
+            and os.environ.get("RENTAGO_EMAIL_MFA_ENABLED", "false").strip().lower()
+            in {"0", "false", "no", "off"}):
+        return False
     return (role or "").strip().lower() != "driver"
 
 
@@ -45,7 +57,7 @@ def _complete_login(request, user, uid, portal_l):
     cur = conn.cursor()
     cur.execute("DELETE FROM user_sessions WHERE UPPER(user_id)=UPPER(:1)", (uid,))
     cur.execute(
-            "INSERT INTO user_sessions (session_id, user_id, login_dt, last_activity, ip_address) "
+        "INSERT INTO user_sessions (session_id, user_id, login_dt, last_activity, ip_address) "
         "VALUES (:1, :2, SYSDATE, SYSDATE, :3)",
         (session_id, uid, request.client.host if request.client else None),
     )
@@ -267,9 +279,15 @@ def logout(request: Request):
             if visible:
                 marks = ",".join(f":{i + 1}" for i in range(len(visible)))
                 cur.execute(
-                    f"SELECT COUNT(*) FROM bookings WHERE booking_id IN ({marks}) "
-                    "AND NVL(status_reason,'') NOT IN ('Guest Trip Ended - Awaiting Driver Confirmation','Trip Completed') "
-                    "AND NOT booking_status LIKE '3-%'", list(visible))
+                    f"SELECT COUNT(*) FROM bookings b WHERE b.booking_id IN ({marks}) "
+                    "AND TRIM(NVL(b.status_reason,'')) NOT IN "
+                    "('Guest Trip Ended - Awaiting Driver Confirmation','Trip Completed') "
+                    "AND NOT b.booking_status LIKE '3-%' "
+                    "AND NOT EXISTS ("
+                    "SELECT 1 FROM trips t WHERE t.booking_id=b.booking_id "
+                    "AND (t.actual_end_dt IS NOT NULL OR t.drop_end_time IS NOT NULL "
+                    "OR TRIM(NVL(t.trip_status,''))='Trip Completed')"
+                    ")", list(visible))
                 active = int(cur.fetchone()[0] or 0)
                 conn.close()
                 if active:
@@ -356,7 +374,7 @@ def register(
     request: Request,
     user_id: str = Form(...),
     name: str = Form(...),
-    email: str = Form(...),
+    email: str = Form(""),
     mobile: str = Form(""),
     company_name: str = Form(""),
     role: str = Form("Operations"),
@@ -366,7 +384,8 @@ def register(
     user_id = user_id.strip()
     name = name.strip()
     email = email.strip()
-    if not user_id or not name or not email:
+    role = role.strip()
+    if not user_id or not name or (not email and role.lower() != "driver"):
         return RedirectResponse(url="/auth/register?msg=missing", status_code=303)
     if not _valid_new_user_id(user_id):
         return RedirectResponse(url="/auth/register?msg=invalid-user-id", status_code=303)
@@ -418,7 +437,7 @@ def pending_users(request: Request):
     )
     rows = cur.fetchall()
     cur.execute(
-        "SELECT user_id, name, email, mobile, company_name, role, status "
+        "SELECT user_id, name, email, mobile, company_name, role, status, emp_id "
         "FROM users WHERE status='Active' ORDER BY user_id"
     )
     active = cur.fetchall()
@@ -653,53 +672,65 @@ def user_directory(request: Request, company_id: str = "", company_name: str = "
                    kind: str = "corporate"):
     """Return people eligible for a selected company/vendor in User Management."""
     user = current_user(request)
-    if not _can_manage_users(user):
+    if not _can_manage_users(user) or not is_internal_user(user):
         return JSONResponse({"error": "not allowed"}, status_code=403)
     conn = get_connection()
     cur = conn.cursor()
     if kind.strip().lower() == "vendor":
-        cur.execute("SELECT vendor_name, email, mobile FROM vendors WHERE vendor_id=:1",
+        cur.execute("SELECT vendor_name, email, mobile, NULL FROM vendors WHERE vendor_id=:1",
                     (company_id.strip(),))
         rows = cur.fetchall()
         cur.execute(
-            "SELECT driver_name, NULL, mobile FROM drivers WHERE vendor_id=:1 "
+            "SELECT driver_name, NULL, mobile, driver_id FROM drivers WHERE vendor_id=:1 "
             "AND (status IS NULL OR UPPER(status) NOT IN ('INACTIVE','TERMINATED')) "
             "ORDER BY driver_name", (company_id.strip(),))
         rows.extend(cur.fetchall())
     elif kind.strip().lower() == "individual":
-        cur.execute("SELECT guest_name, guest_email, guest_contact FROM individuals WHERE individual_id=:1 AND (status IS NULL OR UPPER(status)='ACTIVE')", (company_id.strip(),))
+        cur.execute("SELECT guest_name, guest_email, guest_contact, individual_id FROM individuals WHERE individual_id=:1 AND (status IS NULL OR UPPER(status)='ACTIVE')", (company_id.strip(),))
         rows = cur.fetchall()
     else:
         rows = []
         if company_id.strip():
             cur.execute(
-                "SELECT guest_name, guest_email, guest_mobile FROM employees "
+                "SELECT guest_name, guest_email, guest_mobile, emp_id FROM employees "
                 "WHERE company_id=:1 AND (status IS NULL OR UPPER(status)='ACTIVE') ORDER BY guest_name", (company_id.strip(),))
             rows.extend(cur.fetchall())
             cur.execute(
-                "SELECT c.contact_name, c.email, c.mobile FROM contacts c "
+                "SELECT c.contact_name, c.email, c.mobile, NULL FROM contacts c "
                 "WHERE c.company_id=:1 AND (c.status IS NULL OR UPPER(c.status)='ACTIVE') ORDER BY c.contact_name", (company_id.strip(),))
+            rows.extend(cur.fetchall())
+            cur.execute(
+                "SELECT guest_name, guest_email, guest_contact, individual_id FROM individuals "
+                "WHERE company_id=:1 AND (status IS NULL OR UPPER(status)='ACTIVE') "
+                "ORDER BY guest_name", (company_id.strip(),))
             rows.extend(cur.fetchall())
         elif company_name.strip():
             cur.execute(
-                "SELECT guest_name, guest_email, guest_mobile FROM employees "
+                "SELECT guest_name, guest_email, guest_mobile, emp_id FROM employees "
                 "WHERE UPPER(TRIM(company_name))=UPPER(TRIM(:1)) AND (status IS NULL OR UPPER(status)='ACTIVE') ORDER BY guest_name",
                 (company_name.strip(),))
             rows = cur.fetchall()
+            cur.execute(
+                "SELECT guest_name, guest_email, guest_contact, individual_id FROM individuals "
+                "WHERE UPPER(TRIM(company_name))=UPPER(TRIM(:1)) AND (status IS NULL OR UPPER(status)='ACTIVE') ORDER BY guest_name",
+                (company_name.strip(),))
+            rows.extend(cur.fetchall())
     conn.close()
     out, seen = [], set()
-    for name, email, mobile in rows:
+    for name, email, mobile, identity_id in rows:
         key = (str(name or "").strip().lower(), str(email or "").strip().lower())
         if not key[0] or key in seen:
             continue
         seen.add(key)
         out.append({"name": str(name).strip(), "email": str(email or "").strip(),
-                    "mobile": str(mobile or "").strip()})
+                    "mobile": str(mobile or "").strip(),
+                    "reference_id": company_id.strip(),
+                    "identity_id": str(identity_id or "").strip()})
     return JSONResponse(out)
 
 
 @router.get("/users")
-def users_page(request: Request):
+def users_page(request: Request, name: str = "", company: str = "", role_filter: str = ""):
     user = current_user(request)
     if not user:
         return RedirectResponse(url="/auth/login", status_code=303)
@@ -707,23 +738,29 @@ def users_page(request: Request):
         return RedirectResponse(url="/home?msg=access-denied", status_code=303)
     conn = get_connection()
     cur = conn.cursor()
+    sql = "SELECT user_id, name, email, mobile, company_name, role, status, user_no FROM users"
+    params, conditions = [], []
+    if name:
+        params.append("%" + name + "%"); conditions.append(f"LOWER(name) LIKE LOWER(:{len(params)})")
+    if company:
+        params.append("%" + company + "%"); conditions.append(f"LOWER(company_name) LIKE LOWER(:{len(params)})")
+    if role_filter:
+        params.append("%" + role_filter + "%"); conditions.append(f"UPPER(role) LIKE UPPER(:{len(params)})")
     if _is_super_admin(user):
-        cur.execute(
-            "SELECT user_id, name, email, mobile, company_name, role, status, user_no "
-            "FROM users ORDER BY user_no"
-        )
+        if conditions: sql += " WHERE " + " AND ".join(conditions)
     else:
-        cur.execute(
-            "SELECT user_id, name, email, mobile, company_name, role, status, user_no "
-            "FROM users WHERE UPPER(TRIM(company_name))=UPPER(TRIM(:1)) ORDER BY user_no",
-            (user.get("company_name") or user.get("company") or "",),
-        )
+        params.append(user.get("company_name") or user.get("company") or "")
+        conditions.append(f"UPPER(TRIM(company_name))=UPPER(TRIM(:{len(params)}))")
+        sql += " WHERE " + " AND ".join(conditions)
+    sql += " ORDER BY user_no"
+    cur.execute(sql, params or None)
     headers = [d[0].lower() for d in cur.description]
     users = [dict(zip(headers, r)) for r in cur.fetchall()]
     conn.close()
     return templates.TemplateResponse(
         "users.html",
-        {"request": request, "user": user, "users": users,
+         {"request": request, "user": user, "users": users,
+          "name_filter": name, "company_filter": company, "role_filter": role_filter,
          "msg": request.query_params.get("msg", "")},
     )
 
@@ -755,14 +792,18 @@ async def user_create(request: Request):
     form = dict((await request.form()).multi_items())
     uid = str(form.get("user_id") or "").strip()
     name = str(form.get("name") or "").strip()
-    if name == "__manual__":
+    requested_role = str(form.get("role") or "Operations").strip()
+    if name == "__manual__" or (not name and requested_role.lower() == "driver"):
         name = str(form.get("manual_name") or "").strip()
     email = str(form.get("email") or "").strip()
     password = str(form.get("password") or "")
     confirm = str(form.get("confirm_password") or "")
     company_name = str(form.get("company_name") or "").strip()
     mobile_pin = str(form.get("mobile_pin") or "").strip()
-    if not uid or not name or not email:
+    identity_id = str(form.get("identity_id") or "").strip()
+    if (not uid or not name or (not email and requested_role.lower() != "driver")
+            or (requested_role.lower() == "guest" and not identity_id
+                and company_name != "__new_individual__")):
         return RedirectResponse(url="/auth/users/new?msg=missing", status_code=303)
     if not _valid_new_user_id(uid):
         return RedirectResponse(url="/auth/users/new?msg=invalid-user-id", status_code=303)
@@ -784,6 +825,7 @@ async def user_create(request: Request):
         pin_value = pin_hash(mobile_pin) if mobile_pin else None
         if company_name == "__new_individual__":
             individual_id = next_individual_id(cur)
+            identity_id = individual_id
             company_name = "Individual Guest"
             cur.execute(
                 "INSERT INTO individuals (individual_id,company_name,guest_name,guest_contact,guest_email,status) "
@@ -791,21 +833,44 @@ async def user_create(request: Request):
                 (individual_id, company_name, name, str(form.get("mobile") or "").strip() or None, email),
             )
         cur.execute(
-            "INSERT INTO users (user_no, user_id, name, email, company_name, mobile, "
+            "INSERT INTO users (user_no, user_id, name, email, company_name, mobile, emp_id, "
             "role, requested_role, status, password_hash, password_vault, mobile_pin_hash, created_dt) "
-            "VALUES (:1,:2,:3,:4,:5,:6,:7,:8,:9,:10,:11,:12,:13)",
+            "VALUES (:1,:2,:3,:4,:5,:6,:7,:8,:9,:10,:11,:12,:13,:14)",
             (next_no, uid, name, email,
              str(form.get("company_name") or "").strip() or None,
              str(form.get("mobile") or "").strip() or None,
-             str(form.get("role") or "Operations").strip(),
-             str(form.get("role") or "Operations").strip(),
-             str(form.get("status") or "Active").strip(),
-              new_hash, None, pin_value, datetime.now()),
+             identity_id or None,
+               requested_role,
+               requested_role,
+              str(form.get("status") or "Active").strip(),
+               new_hash, None, pin_value, datetime.now()),
         )
+        tenant_id = str(user.get("tenant_id") or "").strip()
+        if not tenant_id:
+            conn.rollback()
+            conn.close()
+            return RedirectResponse(url="/auth/users/new?msg=tenant-required", status_code=303)
+        cur.execute(
+            "SELECT tenant_id, status FROM tenant_memberships WHERE UPPER(user_id)=UPPER(:1)",
+            (uid,),
+        )
+        memberships = cur.fetchall()
+        if any(str(row[1] or "").upper() == "ACTIVE" and str(row[0] or "") != tenant_id for row in memberships):
+            conn.rollback()
+            conn.close()
+            return RedirectResponse(url="/auth/users/new?msg=tenant-conflict", status_code=303)
+        if not any(str(row[0] or "") == tenant_id for row in memberships):
+            cur.execute(
+                "INSERT INTO tenant_memberships (membership_id,tenant_id,user_id,membership_role,status) "
+                "VALUES (:1,:2,:3,:4,'ACTIVE')",
+                ("MEM-" + uuid.uuid4().hex[:20], tenant_id, uid, requested_role),
+            )
         audit(conn, user, "User Created", uid, f"role {form.get('role')}")
         conn.commit()
     except Exception:
+        conn.rollback()
         conn.close()
+        logger.exception("User creation failed for user id %s", uid)
         return RedirectResponse(url="/auth/users/new?msg=error", status_code=303)
     conn.close()
     return RedirectResponse(url="/auth/users?msg=created", status_code=303)
@@ -852,7 +917,10 @@ async def user_update(request: Request, user_id: str):
     if name == "__manual__":
         name = str(form.get("manual_name") or "").strip()
     email = str(form.get("email") or "").strip()
-    if not name or not email:
+    requested_role = str(form.get("role") or "Operations").strip()
+    identity_id = str(form.get("identity_id") or "").strip()
+    if (not name or (not email and requested_role.lower() != "driver")
+            or (requested_role.lower() == "guest" and not identity_id)):
         return RedirectResponse(
             url=f"/auth/users/{user_id}/edit?msg=missing", status_code=303)
     new_password = str(form.get("new_password") or "")
@@ -864,30 +932,148 @@ async def user_update(request: Request, user_id: str):
     cur = conn.cursor()
     try:
         sets = ["name=:1", "email=:2", "mobile=:3", "company_name=:4",
-                "role=:5", "status=:6"]
+                "role=:5", "status=:6", "emp_id=:7"]
         params = [name, email,
                   str(form.get("mobile") or "").strip() or None,
                   str(form.get("company_name") or "").strip() or None,
-                  str(form.get("role") or "Operations").strip(),
-                  str(form.get("status") or "Active").strip()]
+                  requested_role,
+                  str(form.get("status") or "Active").strip(),
+                  identity_id or None]
         if new_password:
             salt = random_salt_hex()
             new_hash = f"{salt}:{sha256_hex(salt + new_password)}"
-            sets.append("password_hash=:7")
+            sets.append("password_hash=:8")
             params.append(new_hash)
         params.append(user_id)
         cur.execute(
             f"UPDATE users SET {', '.join(sets)} WHERE UPPER(user_id)=UPPER(:{len(params)})",
             params,
         )
+        tenant_id = str(user.get("tenant_id") or "").strip()
+        if not tenant_id:
+            conn.rollback()
+            conn.close()
+            return RedirectResponse(url=f"/auth/users/{user_id}/edit?msg=tenant-required", status_code=303)
+        cur.execute(
+            "SELECT tenant_id, status FROM tenant_memberships WHERE UPPER(user_id)=UPPER(:1)",
+            (user_id,),
+        )
+        memberships = cur.fetchall()
+        active_other_tenant = [
+            row for row in memberships
+            if str(row[1] or "").upper() == "ACTIVE" and str(row[0] or "") != tenant_id
+        ]
+        if active_other_tenant:
+            conn.rollback()
+            conn.close()
+            return RedirectResponse(url=f"/auth/users/{user_id}/edit?msg=tenant-conflict", status_code=303)
+        current_membership = next(
+            (row for row in memberships if str(row[0] or "") == tenant_id), None
+        )
+        if not current_membership:
+            cur.execute(
+                "INSERT INTO tenant_memberships (membership_id,tenant_id,user_id,membership_role,status) "
+                "VALUES (:1,:2,:3,:4,'ACTIVE')",
+                ("MEM-" + uuid.uuid4().hex[:20], tenant_id, user_id, requested_role),
+            )
         audit(conn, user, "User Updated", user_id,
               f"role {form.get('role')}; password reset" if new_password
               else f"role {form.get('role')}")
         conn.commit()
         invalidate_user_cache(user_id)
     except Exception:
+        conn.rollback()
         conn.close()
+        logger.exception("User update failed for user id %s", user_id)
         return RedirectResponse(
             url=f"/auth/users/{user_id}/edit?msg=error", status_code=303)
     conn.close()
     return RedirectResponse(url="/auth/users?msg=updated", status_code=303)
+
+
+@router.post("/users/{user_id}/reset-mobile-pin")
+async def reset_mobile_pin(request: Request, user_id: str):
+    """Reset a Guest's mobile PIN within the administrator's tenant scope."""
+    admin = current_user(request)
+    if not admin or not _can_manage_users(admin) or not is_internal_user(admin):
+        return RedirectResponse(url="/home?msg=access-denied", status_code=303)
+
+    form = dict((await request.form()).multi_items())
+    new_pin = str(form.get("new_mobile_pin") or "").strip()
+    confirm_pin = str(form.get("confirm_mobile_pin") or "").strip()
+    if not valid_pin(new_pin):
+        return RedirectResponse(
+            url=f"/auth/users/{user_id}/edit?msg=mobile-pin-invalid", status_code=303)
+    if new_pin != confirm_pin:
+        return RedirectResponse(
+            url=f"/auth/users/{user_id}/edit?msg=mobile-pin-mismatch", status_code=303)
+
+    tenant_id = str(admin.get("tenant_id") or "").strip()
+    if not tenant_id:
+        return RedirectResponse(
+            url=f"/auth/users/{user_id}/edit?msg=tenant-required", status_code=303)
+
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT role,status,emp_id,mobile FROM users "
+            "WHERE UPPER(user_id)=UPPER(:1) AND ROWNUM=1",
+            (user_id,),
+        )
+        target = cur.fetchone()
+        if not target or str(target[0] or "").strip().lower() != "guest" \
+                or str(target[1] or "").strip().lower() != "active":
+            conn.close()
+            return RedirectResponse(
+                url=f"/auth/users/{user_id}/edit?msg=mobile-pin-not-allowed", status_code=303)
+
+        cur.execute(
+            "SELECT tenant_id,status FROM tenant_memberships "
+            "WHERE UPPER(user_id)=UPPER(:1)",
+            (user_id,),
+        )
+        memberships = cur.fetchall()
+        active_tenants = {
+            str(row[0] or "") for row in memberships
+            if str(row[1] or "").strip().upper() == "ACTIVE"
+        }
+        if active_tenants != {tenant_id}:
+            conn.close()
+            return RedirectResponse(
+                url=f"/auth/users/{user_id}/edit?msg=mobile-pin-not-allowed", status_code=303)
+
+        cur.execute(
+            "UPDATE users SET mobile_pin_hash=:1 WHERE UPPER(user_id)=UPPER(:2)",
+            (pin_hash(new_pin), user_id),
+        )
+
+        cur.execute(
+            "SELECT booking_id FROM bookings WHERE tenant_id=:1 AND emp_guest_id=:2",
+            (tenant_id, target[2]),
+        )
+        booking_ids = [str(row[0]) for row in cur.fetchall() if row[0]]
+        identities = {str(user_id).strip().lower()}
+        if target[3]:
+            identities.add(str(target[3]).strip().lower())
+        for booking_id in booking_ids:
+            for identity in identities:
+                cur.execute(
+                    "DELETE FROM mobile_login_attempts WHERE attempt_key=:1",
+                    (attempt_key(identity, "guest", booking_id),),
+                )
+
+        audit(
+            conn, admin, "MOBILE_PIN_RESET", user_id,
+            f"target_role=Guest; target_emp_id={target[2] or '-'}; tenant_id={tenant_id}",
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        logger.exception("Mobile PIN reset failed for user id %s", user_id)
+        return RedirectResponse(
+            url=f"/auth/users/{user_id}/edit?msg=error", status_code=303)
+    conn.close()
+    return RedirectResponse(
+        url=f"/auth/users/{user_id}/edit?msg=mobile-pin-reset", status_code=303)

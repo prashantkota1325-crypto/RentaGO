@@ -76,9 +76,9 @@ def list_payments(request: Request, pay_type: str = "", q: str = ""):
         params.append("%" + pay_type + "%")
         conds.append("UPPER(pay_type) LIKE UPPER(:" + str(len(params)) + ")")
     if q:
-        params.append("%" + q + "%")
-        conds.append("(LOWER(counterparty) LIKE LOWER(:" + str(len(params))
-                     + ") OR LOWER(ref_id) LIKE LOWER(:" + str(len(params)) + "))")
+        params.append("%" + q + "%"); first = len(params)
+        params.append("%" + q + "%"); second = len(params)
+        conds.append(f"(LOWER(counterparty) LIKE LOWER(:{first}) OR LOWER(ref_id) LIKE LOWER(:{second}))")
     if user.get("tenant_id") and (user.get("role") or "").strip().lower() != "super admin":
         params.append(user["tenant_id"]); conds.append(f"tenant_id=:{len(params)}")
     if conds:

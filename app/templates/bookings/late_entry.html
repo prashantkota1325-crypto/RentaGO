@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Late/Post-Trip Booking Entry{% endblock %}
+{% block content %}
+<h2>Late/Post-Trip Booking Entry</h2>
+<p class="text-muted">Internal RentaGO use only. Enter actual trip times; this does not alter them to the entry time.</p>
+{% if message == 'required' %}<div class="alert alert-warning">Complete all required fields and use valid dates.</div>{% endif %}
+{% if message == 'invalid-times' %}<div class="alert alert-warning">Drop date/time must be after pickup date/time.</div>{% endif %}
+{% if message == 'reason-too-long' %}<div class="alert alert-warning">Reason must be 60 characters or fewer.</div>{% endif %}
+{% if message == 'invalid-master-record' %}<div class="alert alert-warning">Vendor, Driver, and Vehicle must be active records assigned to the same vendor.</div>{% endif %}
+{% if message == 'pickup-odometer-required' %}<div class="alert alert-warning">Enter a valid starting odometer for an active late trip.</div>{% endif %}
+<form method="post" class="row g-3">
+  <div class="col-12"><label class="form-label">Late Entry Type *</label><select name="late_entry_type" class="form-select"><option value="HISTORICAL_POST_TRIP">Historical / Post-Trip</option><option value="CURRENT_TRIP_ACTIVE">Current Trip / Active Late Entry</option></select></div>
+  <div class="col-md-6"><label class="form-label">Guest *</label><input name="guest_name" class="form-control" required></div>
+  <div class="col-md-3"><label class="form-label">Guest Contact</label><input name="guest_contact" class="form-control"></div>
+  <div class="col-md-3"><label class="form-label">Guest Email</label><input name="guest_email" type="email" class="form-control"></div>
+  <div class="col-md-6"><label class="form-label">Actual Pickup Address *</label><input name="pickup_address" class="form-control" required></div>
+  <div class="col-md-3"><label class="form-label">Actual Pickup Date *</label><input name="pickup_date" type="date" class="form-control" required></div>
+  <div class="col-md-3"><label class="form-label">Actual Pickup Time *</label><input name="pickup_time" type="time" class="form-control" required></div>
+  <div class="col-md-6"><label class="form-label">Actual Drop Address *</label><input name="drop_address" class="form-control" required></div>
+  <div class="col-md-3"><label class="form-label">Actual Drop Date *</label><input name="drop_date" type="date" class="form-control" required></div>
+  <div class="col-md-3"><label class="form-label">Actual Drop Time *</label><input name="drop_time" type="time" class="form-control" required></div>
+  <div class="col-md-4"><label class="form-label">Vendor *</label><input name="vendor_name" class="form-control" required></div>
+  <div class="col-md-4"><label class="form-label">Driver *</label><input name="driver_name" class="form-control" required></div>
+  <div class="col-md-4"><label class="form-label">Vehicle *</label><input name="vehicle_no" class="form-control" required></div>
+  <div class="col-md-4"><label class="form-label">Starting Odometer (Active Trip)</label><input name="pickup_start_km" type="number" min="0" step="0.1" class="form-control"></div>
+  <div class="col-12"><label class="form-label">Reason *</label><textarea name="reason" maxlength="60" class="form-control" required></textarea></div>
+  <div class="col-12"><label class="form-label">Late Entry Remarks</label><textarea name="late_entry_remarks" maxlength="1000" class="form-control"></textarea></div>
+  <div class="col-12"><button class="btn btn-primary">Create Completed Post-Trip Booking</button></div>
+</form>
+{% endblock %}

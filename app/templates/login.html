@@ -1,15 +1,20 @@
 {% extends "base.html" %}
 {% block title %}Login{% endblock %}
 {% block content %}
+{% set product = product_branding() %}
 <div class="row justify-content-center mt-5">
   <div class="col-md-4">
     <div class="card shadow">
       <div class="card-body">
-        <div class="text-center mb-4">
+          <div class="text-center mb-4">
           <a href="/static/img/rentago-logo.svg" target="_blank" title="Open / download the RentaGO logo">
             <img src="/static/img/rentago-logo.svg" alt="RentaGO" style="max-width:260px; height:auto">
           </a>
-          <div class="text-muted small mt-1">Car Rental Management System</div>
+          <div class="text-muted small mt-1">{{ product.name }} · Corporate Mobility Platform</div>
+        </div>
+        <div class="text-center text-muted small mt-4">
+          <div>{{ product.attribution }}</div>
+          <div>{{ product.copyright }} {{ product.rights }}</div>
         </div>
         {% set msg = request.query_params.get('msg', '') %}
         {% if msg %}

@@ -26,7 +26,33 @@ MIGRATIONS = [
     ("USERS", "PLATFORM_OWNER", "VARCHAR2(1) DEFAULT 'N'"),
     ("USER_SESSIONS", "MOBILE_BOOKING_ID", "VARCHAR2(40)"),
     ("USER_SESSIONS", "MOBILE_EXPIRES_AT", "TIMESTAMP"),
+    ("USER_SESSIONS", "SESSION_TYPE", "VARCHAR2(20) DEFAULT 'web' NOT NULL"),
+    ("USER_SESSIONS", "DEVICE_ID", "VARCHAR2(128)"),
+    ("GPS_LOG", "TRACKING_SESSION_ID", "VARCHAR2(64)"),
+    ("GPS_LOG", "GPS_EVENT_ID", "VARCHAR2(80)"),
+    ("GPS_LOG", "SEQUENCE_NUMBER", "NUMBER(12)"),
+    ("GPS_LOG", "CAPTURED_AT", "TIMESTAMP"),
+    ("GPS_LOG", "RECEIVED_AT", "TIMESTAMP"),
+    ("GPS_LOG", "VALIDATION_STATUS", "VARCHAR2(20) DEFAULT 'VALID'"),
+    ("GPS_LOG", "VALIDATION_REASON", "VARCHAR2(500)"),
+    ("GPS_LOG", "BATTERY_LEVEL", "NUMBER(5,2)"),
+    ("GPS_LOG", "NETWORK_TYPE", "VARCHAR2(30)"),
+    ("GPS_LOG", "DEVICE_ID", "VARCHAR2(128)"),
+    ("TRACKING_SESSIONS", "DEVICE_ID", "VARCHAR2(128)"),
+    ("TRACKING_SESSIONS", "LAST_SEEN_AT", "TIMESTAMP"),
+    ("TRUSTED_DRIVER_DEVICES", "ALGORITHM", "VARCHAR2(30) DEFAULT 'ED25519' NOT NULL"),
     ("BOOKINGS", "TENANT_ID", "VARCHAR2(40)"),
+    ("BOOKINGS", "IS_LATE_ENTRY", "VARCHAR2(1) DEFAULT 'N' NOT NULL"),
+    ("BOOKINGS", "LATE_ENTRY_REASON", "VARCHAR2(60)"),
+    ("BOOKINGS", "LATE_ENTRY_ENTERED_BY", "VARCHAR2(100)"),
+    ("BOOKINGS", "LATE_ENTRY_ENTERED_AT", "TIMESTAMP"),
+    ("BOOKINGS", "BOOKING_PUNCHED_AT", "TIMESTAMP"),
+    ("TRIPS", "CUSTOMER_SIGNATURE_SOURCE", "VARCHAR2(30)"),
+    ("TRIPS", "CUSTOMER_SIGNATURE_AT", "TIMESTAMP"),
+    ("TRIPS", "CUSTOMER_SIGNATURE_BY", "VARCHAR2(100)"),
+    ("TRIPS", "DRIVER_SIGNATURE_SOURCE", "VARCHAR2(30)"),
+    ("TRIPS", "DRIVER_SIGNATURE_AT", "TIMESTAMP"),
+    ("TRIPS", "DRIVER_SIGNATURE_BY", "VARCHAR2(100)"),
     ("TRIPS", "TENANT_ID", "VARCHAR2(40)"),
     ("INVOICES", "TENANT_ID", "VARCHAR2(40)"),
     ("PAYMENTS", "TENANT_ID", "VARCHAR2(40)"),
@@ -119,6 +145,8 @@ MIGRATIONS = [
     ("TRIPS", "ACTUAL_END_DT", "TIMESTAMP"),
     ("TRIPS", "DRIVER_SIGNATURE", "VARCHAR2(20)"),
     ("GPS_LOG", "LOCATION_ADDRESS", "VARCHAR2(500)"),
+    ("GPS_LOG", "SPEED_KMH", "NUMBER(10,2)"),
+    ("GPS_LOG", "ACCURACY_M", "NUMBER(10,2)"),
     ("TRIPS", "DRIVER_LIVE_LOCATION", "VARCHAR2(1000)"),
     ("TRIPS", "GUEST_LIVE_LOCATION", "VARCHAR2(1000)"),
     ("TRIPS", "LOCATION_SYNC", "VARCHAR2(80)"),
@@ -386,6 +414,18 @@ NEW_TABLES = {
     approved_dt DATE,
     created_dt TIMESTAMP DEFAULT SYSTIMESTAMP
 )""",
+    "POLICY_TEMPLATES": """CREATE TABLE policy_templates (
+    template_id VARCHAR2(40) PRIMARY KEY,
+    template_name VARCHAR2(200) NOT NULL,
+    sections_definition CLOB NOT NULL,
+    numbering_prefix VARCHAR2(30) DEFAULT 'POL',
+    next_number NUMBER(8) DEFAULT 1 NOT NULL,
+    status VARCHAR2(30) DEFAULT 'Active',
+    created_by VARCHAR2(100),
+    created_dt TIMESTAMP DEFAULT SYSTIMESTAMP,
+    updated_by VARCHAR2(100),
+    updated_dt TIMESTAMP
+)""",
     "BUSINESS_RULES": """CREATE TABLE business_rules (
     rule_id VARCHAR2(40) PRIMARY KEY,
     rule_name VARCHAR2(200) NOT NULL,
@@ -461,7 +501,11 @@ NEW_TABLES = {
     user_id VARCHAR2(100) NOT NULL,
     login_dt TIMESTAMP NOT NULL,
     last_activity TIMESTAMP NOT NULL,
-    ip_address VARCHAR2(60)
+     session_type VARCHAR2(20) DEFAULT 'web' NOT NULL,
+     device_id VARCHAR2(128),
+     ip_address VARCHAR2(60),
+     mobile_booking_id VARCHAR2(40),
+     mobile_expires_at TIMESTAMP
 )""",
     "GPS_LOG": """CREATE TABLE gps_log (
     log_id VARCHAR2(40) PRIMARY KEY,
@@ -469,9 +513,13 @@ NEW_TABLES = {
     who VARCHAR2(10) NOT NULL,
     lat NUMBER(10,7) NOT NULL,
     lon NUMBER(10,7) NOT NULL,
-    distance_m NUMBER(12,2),
-    location_sync VARCHAR2(80),
-    captured_dt TIMESTAMP NOT NULL
+     distance_m NUMBER(12,2),
+     location_sync VARCHAR2(80),
+     location_address VARCHAR2(500),
+     tracking_session_id VARCHAR2(64),
+     gps_event_id VARCHAR2(80),
+     sequence_number NUMBER(12),
+     captured_dt TIMESTAMP NOT NULL
 )""",
     "INVOICE_EXPENSE_DOCUMENTS": """CREATE TABLE invoice_expense_documents (
     attachment_id VARCHAR2(40) PRIMARY KEY,
@@ -480,20 +528,82 @@ NEW_TABLES = {
     storage_name VARCHAR2(255) NOT NULL,
     content_type VARCHAR2(120),
     uploaded_by VARCHAR2(100),
-    uploaded_dt TIMESTAMP NOT NULL
+     uploaded_dt TIMESTAMP NOT NULL
 )""",
+    "DRIVER_AVAILABILITY_SESSIONS": """CREATE TABLE driver_availability_sessions (
+     availability_id VARCHAR2(40) PRIMARY KEY,
+     tenant_id VARCHAR2(40) NOT NULL,
+     driver_id VARCHAR2(40) NOT NULL,
+     vendor_id VARCHAR2(40) NOT NULL,
+     status VARCHAR2(30) NOT NULL,
+     activated_at TIMESTAMP NOT NULL,
+     deactivated_at TIMESTAMP,
+     last_seen_at TIMESTAMP,
+     created_at TIMESTAMP DEFAULT SYSTIMESTAMP,
+     updated_at TIMESTAMP DEFAULT SYSTIMESTAMP
+ )""",
+    "TRACKING_SESSIONS": """CREATE TABLE tracking_sessions (
+     tracking_session_id VARCHAR2(64) PRIMARY KEY,
+     tenant_id VARCHAR2(40) NOT NULL,
+     booking_id VARCHAR2(40),
+     trip_continuity_id VARCHAR2(64),
+     user_id VARCHAR2(100) NOT NULL,
+     who VARCHAR2(10) NOT NULL,
+     tracking_token_hash VARCHAR2(64) NOT NULL,
+     status VARCHAR2(20) DEFAULT 'ACTIVE' NOT NULL,
+     started_at TIMESTAMP NOT NULL,
+     ended_at TIMESTAMP,
+     last_sequence NUMBER(12) DEFAULT 0 NOT NULL
+  )""",
+    "GPS_LATEST_POSITIONS": """CREATE TABLE gps_latest_positions (
+     booking_id VARCHAR2(40) NOT NULL,
+     tracking_session_id VARCHAR2(64) NOT NULL,
+     trip_continuity_id VARCHAR2(64),
+     who VARCHAR2(10) NOT NULL,
+     latitude NUMBER(10,7) NOT NULL,
+     longitude NUMBER(10,7) NOT NULL,
+     accuracy_m NUMBER(12,2),
+     speed_mps NUMBER(12,3),
+     heading_deg NUMBER(8,3),
+     captured_at TIMESTAMP NOT NULL,
+     received_at TIMESTAMP NOT NULL,
+     sequence_number NUMBER(12) NOT NULL,
+     status VARCHAR2(20) DEFAULT 'LIVE' NOT NULL,
+     updated_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
+     PRIMARY KEY (booking_id, who)
+   )""",
+    "UNIVERSAL_ACCESS_TOKENS": """CREATE TABLE universal_access_tokens (
+     access_id VARCHAR2(64) PRIMARY KEY,
+     token_hash VARCHAR2(64) NOT NULL UNIQUE,
+     role VARCHAR2(30) NOT NULL,
+     user_id VARCHAR2(100) NOT NULL,
+     driver_id VARCHAR2(64),
+     tenant_id VARCHAR2(64),
+     booking_id VARCHAR2(40),
+     destination VARCHAR2(40) NOT NULL,
+     expires_at TIMESTAMP NOT NULL,
+     status VARCHAR2(20) DEFAULT 'ACTIVE' NOT NULL,
+     created_by VARCHAR2(100),
+     created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
+     exchanged_at TIMESTAMP,
+     revoked_at TIMESTAMP,
+     exchange_challenge_hash VARCHAR2(64),
+     exchange_challenge_expires_at TIMESTAMP,
+     session_id VARCHAR2(64)
+   )""",
 }
 
 
 def main():
     conn = get_connection()
     cur = conn.cursor()
-    cur.execute(
-        "SELECT table_name, column_name FROM user_tab_columns "
-        "WHERE table_name IN ('BOOKINGS','TRIPS')"
-    )
+    cur.execute("SELECT table_name, column_name FROM user_tab_columns")
     existing = {(r[0], r[1]) for r in cur.fetchall()}
+    cur.execute("SELECT table_name FROM user_tables")
+    existing_tables = {r[0] for r in cur.fetchall()}
     for table, column, ddl in MIGRATIONS:
+        if table not in existing_tables:
+            continue
         if (table, column) in existing:
             print(f"[ok] {table}.{column} already present")
             continue
@@ -517,6 +627,14 @@ def main():
             print(f"[added] table {table}")
         except Exception as e:
             print(f"[warn] could not create {table}: {e}")
+    try:
+        cur.execute(
+            "CREATE UNIQUE INDEX UQ_DRIVER_AVAIL_ACTIVE ON driver_availability_sessions ("
+            "CASE WHEN status IN ('IDEAL_NOW','ALLOCATED','ON_TRIP') THEN tenant_id END,"
+            "CASE WHEN status IN ('IDEAL_NOW','ALLOCATED','ON_TRIP') THEN driver_id END)"
+        )
+    except Exception:
+        pass
     # Establish the existing RentaGO operation as Tenant 1 and mirror its
     # internal users into tenant memberships. This is additive and idempotent.
     cur.execute(
@@ -548,12 +666,24 @@ def main():
     cur.execute("UPDATE users SET platform_owner='Y' WHERE UPPER(user_id)=UPPER('pras.k2200')")
     for table_name in ("companies", "vendors", "drivers", "vehicles"):
         cur.execute(f"UPDATE {table_name} SET tenant_id='TEN-RENTA-GO' WHERE tenant_id IS NULL")
+    try:
+        cur.execute("CREATE UNIQUE INDEX UQ_GPS_SESSION_EVENT ON gps_log (tracking_session_id, gps_event_id)")
+    except Exception:
+        pass
     cur.execute("UPDATE invoice_expense_documents d SET tenant_id=(SELECT i.tenant_id FROM invoices i WHERE i.invoice_id=d.invoice_id) WHERE d.tenant_id IS NULL")
     cur.execute("UPDATE sla_instances SET tenant_id='TEN-RENTA-GO' WHERE tenant_id IS NULL")
     cur.execute("UPDATE sla_event_log SET tenant_id='TEN-RENTA-GO' WHERE tenant_id IS NULL")
     for index_name, table_name, columns in (("IDX_BOOKINGS_TENANT", "bookings", "tenant_id,status_reason"), ("IDX_TRIPS_TENANT", "trips", "tenant_id,booking_id"), ("IDX_INVOICES_TENANT", "invoices", "tenant_id,booking_id"), ("IDX_PAYMENTS_TENANT", "payments", "tenant_id,ref_id"), ("IDX_NOTIFICATIONS_TENANT", "notifications", "tenant_id,created_dt"), ("IDX_INVOICE_DOCS_TENANT", "invoice_expense_documents", "tenant_id,invoice_id")):
         try:
             cur.execute(f"CREATE INDEX {index_name} ON {table_name} ({columns})")
+        except Exception:
+            pass
+    for index_name, ddl in (
+        ("UQ_GPS_LOG_EVENT", "CREATE UNIQUE INDEX UQ_GPS_LOG_EVENT ON gps_log (tracking_session_id, gps_event_id)"),
+        ("IDX_TRACKING_SESSIONS_BOOKING", "CREATE INDEX IDX_TRACKING_SESSIONS_BOOKING ON tracking_sessions (tenant_id, booking_id, status)"),
+    ):
+        try:
+            cur.execute(ddl)
         except Exception:
             pass
     # Backfill organization identity from the existing company/vendor fields.

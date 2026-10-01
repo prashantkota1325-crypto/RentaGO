@@ -140,14 +140,35 @@ def current_user(request: Request):
             mobile_expires_at = _parse_oracle_dt(activity[3]) if activity[3] else None
             session_mobile_booking_id = mobile_booking_id
             session_mobile_expires_at = mobile_expires_at
-            if mobile_booking_id and not mobile_expires_at:
+            if mobile_booking_id:
                 cur.execute("SELECT status_reason FROM bookings WHERE booking_id=:1", (mobile_booking_id,))
                 booking_state = cur.fetchone()
                 if booking_state and str(booking_state[0] or "").strip() == "Trip Completed":
-                    cur.execute("UPDATE user_sessions SET mobile_expires_at=SYSDATE+(10/1440) WHERE session_id=:1", (sid,))
-                    conn.commit()
-                    mobile_expires_at = datetime.now() + timedelta(minutes=10)
-                    session_mobile_expires_at = mobile_expires_at
+                    expiry = datetime.now() + timedelta(minutes=10)
+                    if role == "guest":
+                        cur.execute(
+                            "SELECT guest_rating, actual_end_dt, drop_end_time FROM trips WHERE booking_id=:1 "
+                            "ORDER BY trip_id DESC FETCH FIRST 1 ROWS ONLY",
+                            (mobile_booking_id,),
+                        )
+                        feedback_row = cur.fetchone()
+                        rating = None
+                        if feedback_row and feedback_row[0] not in (None, ""):
+                            try:
+                                rating = int(feedback_row[0])
+                            except (TypeError, ValueError):
+                                rating = None
+                        end_dt = _parse_oracle_dt(feedback_row[1]) if feedback_row else None
+                        if end_dt is None and feedback_row:
+                            end_dt = _parse_oracle_dt(feedback_row[2])
+                        if rating is None or rating <= 3:
+                            expiry = (end_dt or datetime.now()) + timedelta(hours=24)
+                    if (mobile_expires_at is None
+                            or abs((mobile_expires_at - expiry).total_seconds()) > 60):
+                        cur.execute("UPDATE user_sessions SET mobile_expires_at=:1 WHERE session_id=:2", (expiry, sid))
+                        conn.commit()
+                        mobile_expires_at = expiry
+                        session_mobile_expires_at = mobile_expires_at
             if mobile_expires_at and datetime.now() >= mobile_expires_at:
                 cur.execute("DELETE FROM user_sessions WHERE session_id=:1", (sid,))
                 conn.commit(); conn.close(); invalidate_session_cache(sid); return None

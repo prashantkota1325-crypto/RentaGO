@@ -31,11 +31,36 @@ def _norm(v):
     return (v or "").strip().lower()
 
 
+def is_internal_user(user):
+    """Return whether the authenticated user is an internal RentaGO user."""
+    role = _norm(user.get("role"))
+    return role in OPERATOR_ROLES or (
+        role not in CORPORATE_PORTAL_ROLES | VENDOR_PORTAL_ROLES | {"guest", "driver"}
+        and _norm(user.get("organization_type")) == "rentago"
+    )
+
+
+def authorization_tenant(user):
+    """Return the authenticated tenant for externally scoped users.
+
+    Missing or ambiguous membership is represented by None and must fail closed.
+    Internal RentaGO users are intentionally handled by their existing broad
+    operator scope.
+    """
+    if is_internal_user(user):
+        return None
+    tenant_id = str(user.get("tenant_id") or "").strip()
+    return tenant_id or None
+
+
 def user_scope(user):
     """Return a scope dict describing the user's data visibility."""
     role = _norm(user.get("role"))
-    if role in OPERATOR_ROLES:
+    if is_internal_user(user):
         return {"mode": "all"}
+    if role in CORPORATE_PORTAL_ROLES | VENDOR_PORTAL_ROLES | {"guest", "driver"} \
+            and not authorization_tenant(user):
+        return {"mode": "denied", "user": user}
     if role in CORPORATE_PORTAL_ROLES:
         return {"mode": "company", "user": user}
     if role in VENDOR_PORTAL_ROLES:
@@ -74,20 +99,15 @@ def _matches_guest(b, user):
     uemail = _norm(user.get("email"))
     umobile = _norm(user.get("mobile"))
     uemp = _norm(user.get("emp_id"))
-    guest_only = _norm(user.get("role")) == "guest"
-    if uemp and b.get("emp_guest_id") and _norm(b.get("emp_guest_id")) == uemp:
+    uid = _norm(user.get("user_id"))
+    if (uemp or uid) and b.get("emp_guest_id") and _norm(b.get("emp_guest_id")) in {uemp, uid}:
         return True
-    if uname and uname in gnames:
-        return True
-    if uemail and (uemail == _norm(b.get("guest_email"))
-                   or (not guest_only and uemail == _norm(b.get("admin_email")))):
-        return True
-    if umobile and (umobile == _norm(b.get("guest_contact"))
-                    or (not guest_only and umobile == _norm(b.get("admin_contact")))):
-        return True
-    if uname and not guest_only and _norm(b.get("admin_name")) == uname:
-        return True
-    return False
+    matches = [
+        bool(uname and uname in gnames),
+        bool(uemail and uemail == _norm(b.get("guest_email"))),
+        bool(umobile and umobile == _norm(b.get("guest_contact"))),
+    ]
+    return sum(matches) >= 2
 
 
 def _matches_driver(b, user):
@@ -95,62 +115,47 @@ def _matches_driver(b, user):
     uname = _norm(user.get("name"))
     umobile = _norm(user.get("mobile"))
     uemp = _norm(user.get("emp_id"))
-    ucomp = _norm(user.get("company")) or _norm(user.get("company_name"))
-    if uname and _norm(b.get("driver_name")) == uname:
-        return True
-    if umobile and _norm(b.get("driver_contact")) == umobile:
-        return True
-    if uemp and _norm(b.get("driver_name")).find(uemp) != -1:
-        return True
-    if ucomp and _norm(b.get("driver_name")).find(ucomp) != -1:
-        return True
-    return False
+    matches = [
+        bool(uname and _norm(b.get("driver_name")) == uname),
+        bool(umobile and _norm(b.get("driver_contact")) == umobile),
+        bool(uemp and _norm(b.get("driver_name")).find(uemp) != -1),
+    ]
+    return sum(matches) >= 2
 
 
 def _matches_vendor(b, user):
-    """Booking handled by this vendor."""
-    uname = _norm(user.get("name"))
-    ucomp = _norm(user.get("company")) or _norm(user.get("company_name"))
-    vname = _norm(b.get("vendor_name"))
-    cname = _norm(b.get("company_name"))
+    """Booking handled by the authenticated vendor organization."""
     org_id = _norm(user.get("organization_id"))
-    if org_id.startswith("vend-") and _norm(b.get("vendor_id")) == org_id[5:]:
-        return True
-    if vname and ((uname and vname == uname) or (ucomp and vname == ucomp)):
-        return True
-    if ucomp and cname == ucomp:
-        return True
-    return False
+    return org_id.startswith("vend-") and _norm(b.get("vendor_id")) == org_id[5:]
 
 
 def _matches_company(b, user):
-    """Booking belonging to the user's company (corporate admin)."""
-    comp = resolve_company(user)
-    if not comp:
-        return False
-    cname = _norm(b.get("company_name"))
-    cid = _norm(b.get("company_id"))
+    """Booking belonging to the authenticated corporate organization."""
     org_id = _norm(user.get("organization_id"))
-    if org_id.startswith("corp-") and _norm(b.get("corporate_id")) == org_id[5:]:
-        return True
-    if comp.get("name") and cname == _norm(comp.get("name")):
-        return True
-    if comp.get("id") and cid == _norm(comp.get("id")):
-        return True
-    return False
+    if not org_id.startswith("corp-"):
+        return False
+    company_id = org_id[5:]
+    return _norm(b.get("corporate_id")) == company_id or _norm(b.get("company_id")) == company_id
 
 
 def visible_booking_ids(user, cur):
     """Return set of visible booking_ids, or None meaning 'ALL'."""
     scope = user_scope(user)
+    if scope["mode"] == "denied":
+        return set()
     if scope["mode"] == "all":
         return None
+    tenant_id = authorization_tenant(user)
+    if not tenant_id:
+        return set()
+    tenant_clause = " WHERE tenant_id=:1"
     cur.execute(
         "SELECT booking_id, company_name, company_id, corporate_id, vendor_id, emp_guest_id, "
         "guest_name_1, guest_name_2, guest_name_3, guest_name_4, guest_name_5, "
         "guest_email, guest_contact, admin_name, admin_email, admin_contact, "
         "vendor_name, driver_name, driver_contact "
-        "FROM bookings"
+        "FROM bookings" + tenant_clause,
+        (tenant_id,),
     )
     ids = set()
     for r in cur.fetchall():

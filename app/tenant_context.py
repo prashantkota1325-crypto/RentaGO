@@ -58,6 +58,6 @@ def resolve_tenant_by_host(conn, host):
     cur = conn.cursor()
     cur.execute(
         "SELECT tenant_id,tenant_code,display_name,status FROM tenants "
-        "WHERE LOWER(domain)=:1 OR LOWER(subdomain)=:1", (hostname,))
+        "WHERE LOWER(domain)=:1 OR LOWER(subdomain)=:2", (hostname, hostname))
     row = cur.fetchone()
     return row

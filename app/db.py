@@ -45,15 +45,18 @@ def _fmt(value):
     if isinstance(value, date):
         return f"TO_DATE('{value:%Y-%m-%d}','YYYY-MM-DD')"
     s = str(value)
-    # Newlines (especially BLANK lines) inside a literal terminate the
-    # statement in SQL*Plus (SP2-0734), so multi-line values are emitted as
-    # 'part' || CHR(10) || 'part' ... which keeps the script single-line and
-    # still stores real line breaks in the column.
-    if "\n" in s or "\r" in s:
-        parts = s.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-        return " || CHR(10) || ".join(
-            "'" + p.replace("'", "''") + "'" for p in parts)
-    return "'" + s.replace("'", "''") + "'"
+    # Keep each generated SQL*Plus line below its roughly 3,000-character
+    # limit. Notification bodies and mailto links can otherwise overflow a
+    # line and fail with SP2-0341 before Oracle receives the statement.
+    parts = s.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    literals = []
+    for index, part in enumerate(parts):
+        chunks = [part[i:i + 500].replace("'", "''")
+                  for i in range(0, len(part), 500)] or [""]
+        literals.extend("'" + chunk + "'" for chunk in chunks)
+        if index < len(parts) - 1:
+            literals.append("CHR(10)")
+    return "\n ||\n".join(literals)
 
 
 def _substitute(sql: str, params):

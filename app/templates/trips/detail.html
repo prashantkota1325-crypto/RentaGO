@@ -41,7 +41,7 @@
       <dt class="col-sm-4">Actual Trip End</dt><dd class="col-sm-8">{{ t.actual_end_dt or '-' }}</dd>
       <dt class="col-sm-4">Drop End KM</dt><dd class="col-sm-8">{{ t.drop_end_km or '-' }}</dd>
       <dt class="col-sm-4">Actual KM</dt><dd class="col-sm-8">{{ t.actual_kms if t.actual_kms is not none else '-' }}</dd>
-      <dt class="col-sm-4">Actual Hrs</dt><dd class="col-sm-8">{{ t.actual_hrs if t.actual_hrs is not none else '-' }}</dd>
+      <dt class="col-sm-4">Actual Hrs</dt><dd class="col-sm-8">{{ t.actual_hrs|duration_words if t.actual_hrs is not none else '-' }}</dd>
       <dt class="col-sm-4">Garage KM</dt><dd class="col-sm-8">{{ t.garage_kms or '-' }}</dd>
     </dl>
   </div>
@@ -49,9 +49,9 @@
     <h5>Extras & Charges</h5>
     <dl class="row">
       <dt class="col-sm-4">Extra KM</dt><dd class="col-sm-8">{{ t.extra_kms or '-' }}</dd>
-      <dt class="col-sm-4">Extra Hrs</dt><dd class="col-sm-8">{{ t.extra_hrs or '-' }}</dd>
+      <dt class="col-sm-4">Extra Hrs</dt><dd class="col-sm-8">{{ t.extra_hrs|duration_words if t.extra_hrs is not none else '-' }}</dd>
       <dt class="col-sm-4">Outstation KM</dt><dd class="col-sm-8">{{ t.outstation_extra_kms or '-' }}</dd>
-      <dt class="col-sm-4">Outstation Hrs</dt><dd class="col-sm-8">{{ t.outstation_extra_hrs or '-' }}</dd>
+      <dt class="col-sm-4">Outstation Hrs</dt><dd class="col-sm-8">{{ t.outstation_extra_hrs|duration_words if t.outstation_extra_hrs is not none else '-' }}</dd>
       <dt class="col-sm-4">Driver Allowance</dt><dd class="col-sm-8">{{ t.drivers_allowance or '-' }}</dd>
       <dt class="col-sm-4">Night Halt</dt><dd class="col-sm-8">{{ t.night_halt or '-' }}</dd>
       <dt class="col-sm-4">Toll / Parking</dt><dd class="col-sm-8">{{ t.toll or '-' }} / {{ t.parking or '-' }}</dd>

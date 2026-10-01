@@ -25,7 +25,7 @@
       <td>{% if i.trip_id %}<a href="/trips/{{ i.trip_id }}">{{ i.trip_id }}</a>{% else %}-{% endif %}</td>
       <td>{{ i.guest_name }}</td>
       <td>{{ i.company_name or '' }}</td>
-      <td>{{ i.pickup_date }}</td>
+      <td>{{ i.pickup_date|display_date }}</td>
       <td><span class="badge bg-secondary">{{ i.invoice_status }}</span></td>
       <td>{{ i.payment_status }}</td>
       <td>{{ i.original_amount }}</td>

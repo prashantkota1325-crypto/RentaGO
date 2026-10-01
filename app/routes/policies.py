@@ -4,6 +4,7 @@ from datetime import datetime
 import uuid
 import csv
 import io
+import json
 
 from fastapi import APIRouter, Request, Form, UploadFile, File
 from fastapi.responses import RedirectResponse, Response
@@ -17,6 +18,14 @@ from ..config_validation import json_object
 router = APIRouter(prefix="/policies")
 CATEGORIES = ("Booking", "Cancellation", "Refund", "Vendor", "Driver", "Fleet",
               "Finance", "Safety", "Compliance", "Customer Service", "IT")
+STANDARD_SECTIONS = (
+    "PURPOSE", "OBJECTIVE", "SCOPE", "APPLICABILITY", "DEFINITIONS",
+    "POLICY STATEMENT", "ROLES AND RESPONSIBILITIES", "PROCEDURE / GUIDELINES",
+    "RULES AND REQUIREMENTS", "APPROVAL REQUIREMENTS", "EXCEPTIONS",
+    "NON-COMPLIANCE", "ESCALATION", "RECORDS AND DOCUMENTATION",
+    "DATA / INFORMATION SECURITY", "REVIEW AND REVISION", "RELATED DOCUMENTS",
+    "REFERENCES", "POLICY APPROVAL", "VERSION HISTORY",
+)
 
 
 def _allowed(user):
@@ -42,6 +51,46 @@ def policy_list(request: Request, status: str = ""):
     rows = [dict(zip(("policy_id", "policy_name", "category", "department", "version", "status", "created_by", "approved_by"), r)) for r in cur.fetchall()]
     conn.close()
     return templates.TemplateResponse("policies/list.html", {"request": request, "user": user, "rows": rows, "can_edit": _editable(user), "status_filter": status, "categories": CATEGORIES})
+
+
+@router.get("/{policy_id}/preview")
+def policy_preview(request: Request, policy_id: str):
+    user = current_user(request)
+    if not _allowed(user):
+        return RedirectResponse("/home?msg=access-denied", status_code=303)
+    conn = get_connection(); cur = conn.cursor()
+    cur.execute(
+        "SELECT p.policy_id,p.policy_name,p.category,p.department,p.current_version,p.status, "
+        "v.condition_definition,v.action_definition,v.created_dt,v.change_reason "
+        "FROM policy_definitions p JOIN policy_versions v ON v.policy_id=p.policy_id "
+        "AND v.version=p.current_version WHERE p.policy_id=:1", (policy_id,))
+    row = cur.fetchone(); conn.close()
+    if not row:
+        return RedirectResponse("/policies?msg=not-found", status_code=303)
+    policy = dict(zip(("id", "name", "category", "department", "version", "status", "conditions", "actions", "created", "change_reason"), row))
+    try:
+        action_data = json.loads(policy["actions"] or "{}")
+    except (TypeError, ValueError):
+        action_data = {}
+    policy["content"] = action_data.get("content", "")
+    policy["sections"] = action_data.get("sections", [])
+    return templates.TemplateResponse("policies/preview.html", {"request": request, "user": user, "policy": policy})
+
+
+@router.get("/dashboard")
+def policy_dashboard(request: Request):
+    user = current_user(request)
+    if not _allowed(user):
+        return RedirectResponse("/home?msg=access-denied", status_code=303)
+    conn = get_connection(); cur = conn.cursor()
+    cur.execute("SELECT status,COUNT(*) FROM policy_definitions GROUP BY status")
+    counts = {str(r[0] or "Draft"): int(r[1] or 0) for r in cur.fetchall()}
+    cur.execute("SELECT NVL(department,'Unassigned'),COUNT(*) FROM policy_definitions GROUP BY department ORDER BY 2 DESC")
+    departments = [(r[0], int(r[1] or 0)) for r in cur.fetchall()]
+    cur.execute("SELECT policy_id,policy_name,status,created_dt FROM policy_definitions ORDER BY created_dt DESC FETCH FIRST 10 ROWS ONLY")
+    recent = [dict(zip(("id","name","status","created"), r)) for r in cur.fetchall()]
+    conn.close()
+    return templates.TemplateResponse("policies/dashboard.html", {"request": request, "user": user, "counts": counts, "departments": departments, "recent": recent, "can_edit": _editable(user)})
 
 
 @router.get("/export")
@@ -119,13 +168,20 @@ def policy_new(request: Request, source_id: str = ""):
         row = cur.fetchone(); conn.close()
         if row:
             record = dict(zip(("policy_name", "category", "department", "conditions", "actions"), row))
-    return templates.TemplateResponse("policies/form.html", {"request": request, "user": user, "categories": CATEGORIES, "record": record, "source_id": source_id})
+    if record.get("actions"):
+        try:
+            actions = json.loads(record["actions"])
+            record["content"] = actions.get("content", "") if isinstance(actions, dict) else ""
+            record["sections"] = actions.get("sections", []) if isinstance(actions, dict) else []
+        except (TypeError, ValueError):
+            record["content"] = ""
+    return templates.TemplateResponse("policies/form.html", {"request": request, "user": user, "categories": CATEGORIES, "sections": STANDARD_SECTIONS, "record": record, "source_id": source_id})
 
 
 @router.post("/save")
 def policy_save(request: Request, policy_name: str = Form(...), category: str = Form(...),
                 department: str = Form(""), conditions: str = Form(""),
-                actions: str = Form(""), change_reason: str = Form(""),
+                actions: str = Form(""), content: str = Form(""), sections_json: str = Form(""), change_reason: str = Form(""),
                 source_policy_id: str = Form("")):
     user = current_user(request)
     if not _editable(user) or category not in CATEGORIES:
@@ -133,6 +189,15 @@ def policy_save(request: Request, policy_name: str = Form(...), category: str = 
     try:
         conditions = json_object(conditions, "Conditions")
         actions = json_object(actions, "Actions")
+        if content.strip() or sections_json.strip():
+            action_data = json.loads(actions or "{}")
+            if not isinstance(action_data, dict):
+                action_data = {}
+            if content.strip():
+                action_data["content"] = content.strip()
+            if sections_json.strip():
+                action_data["sections"] = json.loads(sections_json)
+            actions = json.dumps(action_data, ensure_ascii=False)
     except ValueError:
         return RedirectResponse("/policies?msg=invalid-json", status_code=303)
     conn = get_connection(); cur = conn.cursor()

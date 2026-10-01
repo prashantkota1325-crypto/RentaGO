@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Vendor Mobile{% endblock %}
+{% block content %}
+<div class="container-fluid px-1">
+  <h3>Vendor Mobile</h3>
+  <p class="text-muted small">Vendor: {{ vendor_id }} · Read-only operational view</p>
+  <section class="card mb-3"><div class="card-body"><h5>My Bookings</h5>{% for b in bookings %}<div class="border rounded p-2 mb-2" data-testid="vendor-booking-item"><strong>{{ b.booking_id }}</strong><br>{{ b.pickup_date }} {{ b.pickup_time or '' }} · {{ b.status_reason or b.booking_status }}<br>{{ b.pickup or '-' }} → {{ b.drop or '-' }}<br>Driver: {{ b.driver or '-' }} · Vehicle: {{ b.vehicle or '-' }}</div>{% else %}<p class="text-muted mb-0">No bookings.</p>{% endfor %}</div></section>
+  <section class="card mb-3"><div class="card-body"><h5>My Trips</h5>{% for t in trips %}<div class="border rounded p-2 mb-2" data-testid="vendor-trip-item"><strong>{{ t.trip_id }}</strong> · {{ t.status or '-' }}<br>Booking: {{ t.booking_id }} · Driver: {{ t.driver or '-' }} · Vehicle: {{ t.vehicle or '-' }}</div>{% else %}<p class="text-muted mb-0">No trips.</p>{% endfor %}</div></section>
+  <section class="card mb-3"><div class="card-body"><h5>My Drivers</h5>{% for d in drivers %}<div class="border rounded p-2 mb-2">{{ d.name }} · {{ d.status or '-' }}<br>{{ d.mobile or '-' }}</div>{% else %}<p class="text-muted mb-0">No drivers.</p>{% endfor %}</div></section>
+  <section class="card mb-3"><div class="card-body"><h5>My Vehicles</h5>{% for v in vehicles %}<div class="border rounded p-2 mb-2">{{ v.registration }} · {{ v.make or '' }} {{ v.model or '' }} · {{ v.status or '-' }}</div>{% else %}<p class="text-muted mb-0">No vehicles.</p>{% endfor %}</div></section>
+  <section class="card mb-3"><div class="card-body"><h5>My Live Tracking</h5>{% for t in tracking %}<div class="border rounded p-2 mb-2"><strong>{{ t.booking_id }}</strong> · {{ t.status }}<br>{{ t.driver or '-' }} · {{ t.vehicle or '-' }}{% if t.tracking_url %}<br><a class="btn btn-sm btn-outline-primary mt-2" data-testid="vendor-tracking" href="{{ t.tracking_url }}">View live trip</a>{% endif %}</div>{% else %}<p class="text-muted mb-0">No active trips.</p>{% endfor %}</div></section>
+</div>
+{% endblock %}

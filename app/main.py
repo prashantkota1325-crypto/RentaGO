@@ -44,6 +44,10 @@ from .routes import platform_tenants as platform_tenant_routes
 from .routes import tenant_settings as tenant_settings_routes
 from .routes import platform_plans as platform_plans_routes
 from .routes import tenant_members as tenant_members_routes
+from .routes import ideal_now as ideal_now_routes
+from .routes import guest_access as guest_access_routes
+from .routes import trusted_devices as trusted_device_routes
+from .routes import universal_access as universal_access_routes
 
 app = FastAPI(title=settings.APP_NAME)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
@@ -78,6 +82,10 @@ app.include_router(platform_tenant_routes.router)
 app.include_router(tenant_settings_routes.router)
 app.include_router(platform_plans_routes.router)
 app.include_router(tenant_members_routes.router)
+app.include_router(ideal_now_routes.router)
+app.include_router(guest_access_routes.router)
+app.include_router(trusted_device_routes.router)
+app.include_router(universal_access_routes.router)
 
 
 @app.on_event("startup")
@@ -135,7 +143,7 @@ async def csrf_protection(request: Request, call_next):
     exempt = (
         request.url.path in {"/auth/login", "/auth/corporate-login", "/auth/vendor-login",
                              "/auth/guest-login", "/auth/driver-login", "/auth/register",
-                             "/auth/verify-otp", "/mobile/guest-login", "/mobile/driver-login"}
+                              "/auth/verify-otp", "/mobile/guest-login", "/mobile/driver-login", "/mobile/vendor-login"}
         or request.url.path.startswith("/track/")
     )
     session_present = bool(request.cookies.get("rentago_session"))

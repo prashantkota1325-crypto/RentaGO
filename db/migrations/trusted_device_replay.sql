@@ -1,0 +1,25 @@
+-- LAB-only, repeatable challenge/offline-authorization protocol foundation.
+DECLARE
+  n NUMBER;
+BEGIN
+  SELECT COUNT(*) INTO n FROM user_tables WHERE table_name='TRUSTED_DEVICE_CHALLENGES';
+  IF n=0 THEN EXECUTE IMMEDIATE q'~CREATE TABLE trusted_device_challenges (
+    challenge_id VARCHAR2(64) PRIMARY KEY, device_id VARCHAR2(120) NOT NULL,
+    driver_id VARCHAR2(100) NOT NULL, tenant_id VARCHAR2(40) NOT NULL,
+    vendor_id VARCHAR2(40), challenge_hash VARCHAR2(64) NOT NULL UNIQUE,
+    issued_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL, expires_at TIMESTAMP NOT NULL,
+    used_at TIMESTAMP, status VARCHAR2(20) DEFAULT 'ISSUED' NOT NULL)~'; END IF;
+  SELECT COUNT(*) INTO n FROM user_tables WHERE table_name='TRUSTED_OFFLINE_AUTHORIZATIONS';
+  IF n=0 THEN EXECUTE IMMEDIATE q'~CREATE TABLE trusted_offline_authorizations (
+    offline_authorization_id VARCHAR2(64) PRIMARY KEY, device_id VARCHAR2(120) NOT NULL,
+    device_key_id VARCHAR2(120) NOT NULL, driver_id VARCHAR2(100) NOT NULL,
+    tenant_id VARCHAR2(40) NOT NULL, vendor_id VARCHAR2(40),
+    authorization_epoch VARCHAR2(64) NOT NULL, issued_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
+    expires_at TIMESTAMP NOT NULL, status VARCHAR2(20) DEFAULT 'ACTIVE' NOT NULL,
+    revoked_at TIMESTAMP, issued_by VARCHAR2(100) NOT NULL)~'; END IF;
+  SELECT COUNT(*) INTO n FROM user_indexes WHERE index_name='IDX_DEVICE_CHALLENGES_DEVICE';
+  IF n=0 THEN EXECUTE IMMEDIATE 'CREATE INDEX IDX_DEVICE_CHALLENGES_DEVICE ON TRUSTED_DEVICE_CHALLENGES(device_id,status,expires_at)'; END IF;
+  SELECT COUNT(*) INTO n FROM user_indexes WHERE index_name='IDX_OFFLINE_AUTH_DEVICE';
+  IF n=0 THEN EXECUTE IMMEDIATE 'CREATE INDEX IDX_OFFLINE_AUTH_DEVICE ON TRUSTED_OFFLINE_AUTHORIZATIONS(device_id,status,expires_at)'; END IF;
+END;
+/

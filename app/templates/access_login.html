@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}RentaGO Secure Access{% endblock %}
+{% block content %}
+<div class="row justify-content-center mt-5"><div class="col-md-5 col-11"><div class="card shadow"><div class="card-body">
+  <h2 class="text-center">RentaGO</h2><h4 class="text-center mb-4">Secure Access</h4>
+  {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
+  {% if message %}<div class="alert alert-info">{{ message }}<a class="btn btn-primary w-100 mt-3" href="{{ driver_handoff }}">Open RentaGO App</a><a class="btn btn-outline-primary w-100 mt-2" href="/access/download/apk">Download RentaGO LAB App</a></div>{% endif %}
+  {% if not driver_handoff %}<form method="post" action="/access">
+    <label class="form-label" for="secure_token">Secure Token</label>
+    <input id="secure_token" name="secure_token" class="form-control mb-3" autocomplete="one-time-code" required>
+    <button class="btn btn-primary btn-lg w-100" type="submit">Continue</button>
+  </form>{% endif %}
+  <p class="text-muted small mt-3 mb-0">Enter the User ID and Secure Token sent by RentaGO.</p>
+</div></div></div></div>
+{% endblock %}

@@ -5,6 +5,12 @@
   <h2>User Management</h2>
   <a class="btn btn-primary" href="/auth/users/new">+ New User</a>
 </div>
+<form method="get" class="card card-body my-3"><div class="row g-2 align-items-end">
+  <div class="col-md-4"><label class="form-label">Name</label><input name="name" value="{{ name_filter }}" class="form-control"></div>
+  <div class="col-md-4"><label class="form-label">Company</label><input name="company" value="{{ company_filter }}" class="form-control"></div>
+  <div class="col-md-3"><label class="form-label">Role</label><input name="role_filter" value="{{ role_filter }}" class="form-control"></div>
+  <div class="col-md-1"><button class="btn btn-primary">Filter</button></div>
+</div></form>
 
 {% set msg = request.query_params.get('msg', '') %}
 {% if msg %}

@@ -24,7 +24,7 @@
       </select></div>
     <div class="col-md-4"><label>Company</label>
       <input name="company_name" data-company-search class="form-control" value="{{ b.company_name or '' }}"></div>
-    <input type="hidden" name="company_id" value="{{ b.company_id or '' }}">
+    <div class="col-md-2"><label>Company ID</label><input name="company_id" class="form-control" value="{{ b.company_id or '' }}" readonly></div>
     <div class="col-md-4"><label>Entity Name</label><input name="entity_name" class="form-control" value="{{ b.entity_name or '' }}"></div>
     <div class="col-md-3"><label>Reference Code</label><input name="reference_code" class="form-control" value="{{ b.reference_code or '' }}"></div>
     <div class="col-md-3"><label>Reference No.</label><input name="ref_no" class="form-control" value="{{ b.ref_no or '' }}"></div>

@@ -62,9 +62,9 @@ def list_invoices(request: Request, status: str = "", q: str = ""):
         params.append("%" + status + "%")
         conds.append("UPPER(invoice_status) LIKE UPPER(:" + str(len(params)) + ")")
     if q:
-        params.append("%" + q + "%")
-        conds.append("(LOWER(guest_name) LIKE LOWER(:" + str(len(params)) + ") OR "
-                     "LOWER(booking_id) LIKE LOWER(:" + str(len(params)) + "))")
+        params.append("%" + q + "%"); first = len(params)
+        params.append("%" + q + "%"); second = len(params)
+        conds.append(f"(LOWER(guest_name) LIKE LOWER(:{first}) OR LOWER(booking_id) LIKE LOWER(:{second}))")
     if conds:
         sql += " WHERE " + " AND ".join(conds)
     sql += " ORDER BY invoice_id DESC FETCH FIRST 500 ROWS ONLY"

@@ -31,7 +31,7 @@
           </div>
           <div class="mb-2">
             <label class="form-label">Email</label>
-            <input name="email" type="email" class="form-control" required>
+            <input id="registration-email" name="email" type="email" class="form-control">
           </div>
           <div class="row">
           <div class="col-6 mb-2">
@@ -45,7 +45,7 @@
           </div>
           <div class="mb-2">
             <label class="form-label">Requested Role</label>
-            <select name="role" class="form-select">
+            <select id="registration-role" name="role" class="form-select">
               {% for r in roles %}
               <option value="{{ r }}">{{ r }}</option>
               {% endfor %}
@@ -63,6 +63,17 @@
             <button class="btn btn-primary" type="submit">Register</button>
           </div>
         </form>
+        <script>
+          const roleField = document.getElementById("registration-role");
+          const emailField = document.getElementById("registration-email");
+          function updateRegistrationEmailRequirement() {
+            const isDriver = roleField.value.trim().toLowerCase() === "driver";
+            emailField.required = !isDriver;
+            emailField.placeholder = isDriver ? "Optional for Driver accounts" : "Required";
+          }
+          roleField.addEventListener("change", updateRegistrationEmailRequirement);
+          updateRegistrationEmailRequirement();
+        </script>
         <div class="text-center mt-3">
           <a href="/auth/login">Already registered? Sign in</a>
         </div>

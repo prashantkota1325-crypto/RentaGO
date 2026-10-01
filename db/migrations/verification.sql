@@ -1,0 +1,18 @@
+-- Read-only verification for the offline/system-downtime source migration.
+SET PAGESIZE 100
+SELECT table_name, column_name, data_type, nullable FROM user_tab_columns
+WHERE (table_name='BOOKINGS' AND column_name IN
+  ('IS_LATE_ENTRY','LATE_ENTRY_REASON','LATE_ENTRY_ENTERED_BY','LATE_ENTRY_ENTERED_AT',
+   'BOOKING_PUNCHED_AT','ENTRY_MODE','LATE_ENTRY_TYPE','LATE_ENTRY_REMARKS',
+   'IS_LATE_ENTRY_ACTIVATED','LATE_ENTRY_ACTIVATED_BY','LATE_ENTRY_ACTIVATED_AT',
+   'POST_TRIP_REASON','ACTUAL_START_AT','ACTUAL_END_AT'))
+   OR (table_name='TRIPS' AND column_name IN
+  ('ACTUAL_START_DT','ACTUAL_END_DT','CUSTOMER_SIGNATURE_SOURCE','CUSTOMER_SIGNATURE_AT',
+   'CUSTOMER_SIGNATURE_BY','DRIVER_SIGNATURE_SOURCE','DRIVER_SIGNATURE_AT','DRIVER_SIGNATURE_BY',
+   'DRIVER_FEEDBACK','DRIVER_SAFETY_STATUS','DRIVER_SAFETY_ISSUES',
+   'DRIVER_FEEDBACK_SUBMITTED_ON','DRIVER_FEEDBACK_BY'))
+ORDER BY table_name, column_name;
+SELECT COUNT(*) AS late_entry_rows FROM bookings WHERE is_late_entry='Y';
+SELECT COUNT(*) AS offline_completed_rows FROM bookings
+ WHERE entry_mode='OFFLINE_SYSTEM_DOWNTIME' AND booking_status='3-Completed'
+ AND status_reason='Trip Completed';

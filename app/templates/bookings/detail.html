@@ -7,6 +7,7 @@
 <span class="badge {% if b.booking_status == '1-Pending' %}bg-warning text-dark{% elif b.booking_status == '2-Confirmed' %}bg-success{% else %}bg-danger{% endif %}">{{ b.booking_status }}</span>
 <span class="badge bg-info">Step {{ '3' if b.driver_name else ('2' if b.vendor_name else '1') }}</span>
 <p class="text-muted">{{ b.status_reason }}</p>
+{% if pickup_passed_not_started and show_rentago_triggers %}<div class="alert alert-danger"><strong>RED FLAG: Pickup time passed, but trip has not started.</strong><form method="post" action="/bookings/{{ b.booking_id }}/pickup-red-flag-reason" class="row g-2 align-items-end mt-2"><div class="col-md-5"><label class="form-label">Reason</label><select name="reason" class="form-select" required><option>Done On Time</option><option>Waiting for Guest</option><option>Driver Not Reached</option><option>Vehicle Breakdown</option><option>Technical Reason</option><option>System Down</option></select></div><div class="col-md-auto"><button class="btn btn-danger">Save Red Flag Reason</button></div></form></div>{% endif %}
 <div class="row g-2 small mb-3"><div class="col-md-4"><strong>Step 1 Submitted</strong><br>{{ b.step1_time or '-' }}</div><div class="col-md-4"><strong>Step 2 Submitted</strong><br>{{ b.step2_time or '-' }}</div><div class="col-md-4"><strong>Step 3 Submitted</strong><br>{{ b.step3_time or '-' }}</div></div>
 {% if invoice_id %}
 <p><a class="btn btn-sm btn-outline-primary" href="/invoices/{{ invoice_id }}">View Invoice {{ invoice_id }}</a></p>
@@ -18,7 +19,8 @@
 <div class="alert alert-{{ 'success' if msg in ['guest-started','trip-started','guest-ended','trip-completed','step2-done','confirmed-allocated','driver-location-saved','guest-location-saved','cancelled','sync-synced','ack-sent','modified','vendor-modified','driver-modified'] else 'warning' }} alert-dismissible fade show" role="alert">
   {% if msg == 'guest-started' %}Guest Trip Started - driver can now Start Trip.{% elif msg == 'trip-started' %}
   Trip Started (Trip In Progress).{% elif msg == 'guest-ended' %}Guest Trip Ended - driver can now End Trip.{% elif msg == 'trip-completed' %}
-  Trip Completed.{% elif msg == 'step2-done' %}
+   Trip Completed.{% elif msg == 'late-entry-created' %}
+   Late/post-trip booking and completed trip created with the supplied actual times.{% elif msg == 'step2-done' %}
   Vendor allocated. Now assign driver & vehicle (Step 3).{% elif msg == 'confirmed-allocated' %}
   Booking confirmed - driver & vehicle allocated. Trip added.{% elif msg == 'missing-vendor' %}
   Please fill in the vendor name (Step 2).{% elif msg == 'missing-driver-vehicle' %}
@@ -89,9 +91,13 @@
     {% endif %}</dd>
   {% endif %}
   </dl></section>
+  <section class="booking-detail-section mt-3"><h5>Step 1 - Booking</h5><dl class="row mb-0">
+   <dt class="col-sm-3">Package Type</dt><dd class="col-sm-9">{{ b.package_type or '-' }}</dd>
+   <dt class="col-sm-3">Vehicle Type</dt><dd class="col-sm-9">{{ b.vehicle_type or '-' }}</dd>
+  </dl></section>
   <section class="booking-detail-section mt-3"><h5>2. Pickup Details</h5><dl class="row mb-0">
   <dt class="col-sm-3">Pickup</dt><dd class="col-sm-9">{{ b.pickup_address }}{% if b.pickup_city %} ({{ b.pickup_city }}{% if b.pickup_state %}, {{ b.pickup_state }}{% endif %}){% endif %}
-    {% if b.pickup_date %} &mdash; {{ b.pickup_date }} {{ b.pickup_time or '' }}{% endif %}
+    {% if b.pickup_date %} &mdash; {{ b.pickup_date|display_date }} {{ b.pickup_time|display_time }}{% endif %}
     {% if b.pickups_sm %}<span class="badge bg-secondary ms-1">{{ b.pickups_sm }} pickup</span>{% endif %}</dd>
    {% if b.pickup_gps %}<dt class="col-sm-3">Pickup GPS</dt><dd class="col-sm-9">
      <a href="https://www.google.com/maps?q={{ b.pickup_gps }}" target="_blank">{{ b.pickup_gps }}</a>
@@ -105,7 +111,7 @@
   </dl></section>
   <section class="booking-detail-section mt-3"><h5>3. Drop Details</h5><dl class="row mb-0">
   <dt class="col-sm-3">Drop</dt><dd class="col-sm-9">{{ b.drop_address }}{% if b.drop_city %} ({{ b.drop_city }}{% if b.drop_state %}, {{ b.drop_state }}{% endif %}){% endif %}
-    {% if b.drop_date %} &mdash; {{ b.drop_date }} {{ b.drop_time or '' }}{% endif %}
+    {% if b.drop_date %} &mdash; {{ b.drop_date|display_date }} {{ b.drop_time|display_time }}{% endif %}
     {% if b.drops_sm %}<span class="badge bg-secondary ms-1">{{ b.drops_sm }} drop</span>{% endif %}</dd>
    {% if b.drop_gps %}<dt class="col-sm-3">Drop GPS</dt><dd class="col-sm-9">
      <a href="https://www.google.com/maps?q={{ b.drop_gps }}" target="_blank">{{ b.drop_gps }}</a>
@@ -131,7 +137,8 @@
      {% if b.driver_name and can_change_driver %}
      <button class="btn btn-sm btn-outline-primary ms-2" data-bs-toggle="modal" data-bs-target="#modifyDriverModal">Modify Vehicle &amp; Driver (Step 2)</button>
     {% endif %}</dd>
-  <dt class="col-sm-3">Vehicle</dt><dd class="col-sm-9">{{ b.vehicle_no or '-' }}</dd>
+   <dt class="col-sm-3">Vehicle</dt><dd class="col-sm-9">{{ b.vehicle_no or '-' }}</dd>
+    {% if b.entry_mode or b.actual_start_at or b.actual_end_at %}<dt class="col-sm-3">Entry / Actual Trip Time</dt><dd class="col-sm-9">{{ b.entry_mode or 'Normal' }}{% if b.late_entry_type %} - {{ b.late_entry_type }}{% endif %}{% if b.post_trip_reason %} - {{ b.post_trip_reason }}{% endif %}<br>Booking punched: {{ b.booking_punched_at or '-' }}<br>Actual: {{ b.actual_start_at or '-' }} to {{ b.actual_end_at or '-' }}{% if b.is_late_entry_activated == 'Y' %}<br>Activated: {{ b.late_entry_activated_at or '-' }} by {{ b.late_entry_activated_by or '-' }}{% endif %}</dd>{% endif %}
   {% if b.driver_instructions %}<dt class="col-sm-3">Driver Instructions</dt><dd class="col-sm-9">{{ b.driver_instructions }}</dd>{% endif %}
   {% if b.special_instructions %}<dt class="col-sm-3">Special Instructions</dt><dd class="col-sm-9">{{ b.special_instructions }}</dd>{% endif %}
   {% if b.driver_photo or b.vehicle_photo %}
@@ -162,7 +169,7 @@
     <div class="col-md-3"><span class="text-muted">Start Kms from Pickup</span><br><strong>0</strong></div>
     <div class="col-md-3"><span class="text-muted">Planned Stops</span><br><strong>{{ planned_route.stops|length if planned_route else '-' }}</strong></div>
     <div class="col-md-3"><span class="text-muted">Total Kms</span><br><strong>{{ b.planned_kms if b.planned_kms is not none else '-' }}</strong></div>
-    <div class="col-md-3"><span class="text-muted">Total Hrs</span><br><strong>{{ b.planned_hrs if b.planned_hrs is not none else '-' }}</strong></div>
+     <div class="col-md-3"><span class="text-muted">Total Hrs</span><br><strong>{{ b.planned_hrs|duration_clock_words if b.planned_hrs is not none else '-' }}</strong></div>
   </div>
   {% if b.planned_route_source == 'Incomplete - GPS required' %}<div class="alert alert-warning mt-3 mb-0">Planned Kms is not calculated because one or more pickup/drop stops do not have GPS coordinates. Use the GPS button for every entered stop and save Step 1 again.</div>{% endif %}
   {% if planned_route and planned_route.stops %}<div class="mt-3"><strong>Planned route</strong>: {{ planned_route.stops|map(attribute='label')|join(' &rarr; ') }}<div class="small text-muted">Each leg is calculated in order and retained with its provider, distance, and duration.</div></div>{% endif %}
@@ -272,6 +279,7 @@
 
 {% set reason = b.status_reason or '' %}
 {% set is_driver = user.role|lower == 'driver' %}
+{% if trip and (trip.customer_signature_source or trip.driver_signature_source) %}<section class="booking-detail-section mt-3"><h5>Trip Sheet Signatures</h5><dl class="row mb-0">{% if trip.customer_signature_source %}<dt class="col-sm-3">Guest Signature</dt><dd class="col-sm-9">{{ trip.customer_signature or 'Captured' }} via {{ trip.customer_signature_source }} at {{ trip.customer_signature_at or '-' }}{% if trip.customer_signature_by %} by {{ trip.customer_signature_by }}{% endif %}</dd>{% endif %}{% if trip.driver_signature_source %}<dt class="col-sm-3">Driver Signature</dt><dd class="col-sm-9">{{ trip.driver_signature or 'Captured' }} via {{ trip.driver_signature_source }} at {{ trip.driver_signature_at or '-' }}{% if trip.driver_signature_by %} by {{ trip.driver_signature_by }}{% endif %}</dd>{% endif %}</dl></section>{% endif %}
 {% if can_feedback %}
 <div class="card mt-4 border-success">
   <div class="card-header">Guest Feedback</div>
@@ -541,7 +549,7 @@
     <div class="col-md-3"><span class="text-muted">Start Kms</span><br><strong>{{ trip.pickup_start_km if trip.pickup_start_km is not none else 0 }}</strong></div>
     <div class="col-md-3"><span class="text-muted">End Kms</span><br><strong>{{ trip.drop_end_km if trip.drop_end_km is not none else 0 }}</strong></div>
     <div class="col-md-3"><span class="text-muted">Total Kms</span><br><strong>{{ trip.actual_kms if trip.actual_kms is not none else 0 }}</strong></div>
-    <div class="col-md-3"><span class="text-muted">Total Hrs</span><br><strong>{{ trip.actual_hrs if trip.actual_hrs is not none else 0 }}</strong></div>
+     <div class="col-md-3"><span class="text-muted">Total Hrs</span><br><strong>{{ trip.actual_hrs|duration_words if trip.actual_hrs is not none else '-' }}</strong></div>
     <div class="col-md-6"><span class="text-muted">Actual Trip Start</span><br><strong>{{ trip.actual_start_dt or '-' }}</strong></div>
     <div class="col-md-6"><span class="text-muted">Actual Trip End</span><br><strong>{{ trip.actual_end_dt or '-' }}</strong></div>
   </div></div>

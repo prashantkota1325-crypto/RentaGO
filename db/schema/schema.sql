@@ -405,7 +405,22 @@ CREATE TABLE bookings (
     location_sync    VARCHAR2(80),
     cancellation_reason VARCHAR2(120),
     cancellation_date   DATE,
-    flight_details   VARCHAR2(500)
+    flight_details   VARCHAR2(500),
+    is_late_entry    VARCHAR2(1) DEFAULT 'N' NOT NULL,
+    late_entry_reason VARCHAR2(60),
+    late_entry_entered_by VARCHAR2(100),
+    late_entry_entered_at TIMESTAMP,
+    booking_punched_at TIMESTAMP,
+    entry_mode VARCHAR2(40),
+    late_entry_type VARCHAR2(30),
+    late_entry_remarks VARCHAR2(1000),
+    is_late_entry_activated VARCHAR2(1) DEFAULT 'N' NOT NULL,
+    late_entry_activated_by VARCHAR2(100),
+    late_entry_activated_at TIMESTAMP,
+    post_trip_reason VARCHAR2(100),
+    actual_start_at TIMESTAMP,
+    actual_end_at TIMESTAMP,
+    trip_continuity_id VARCHAR2(64)
 );
 
 -- ---------------------------------------------------------------------------
@@ -424,6 +439,12 @@ CREATE TABLE trips (
     booking_status   VARCHAR2(80),
     customer_signature VARCHAR2(20),
     driver_signature VARCHAR2(20),
+    customer_signature_source VARCHAR2(30),
+    customer_signature_at TIMESTAMP,
+    customer_signature_by VARCHAR2(100),
+    driver_signature_source VARCHAR2(30),
+    driver_signature_at TIMESTAMP,
+    driver_signature_by VARCHAR2(100),
     feedback_form    VARCHAR2(20),
     google_maps_link VARCHAR2(2000),
     planned_route_json CLOB,
@@ -463,8 +484,14 @@ CREATE TABLE trips (
     feedback_improvements VARCHAR2(2000),
     safety_status VARCHAR2(30),
     safety_issues VARCHAR2(2000),
+    driver_feedback VARCHAR2(2000),
+    driver_safety_status VARCHAR2(30),
+    driver_safety_issues VARCHAR2(2000),
+    driver_feedback_submitted_on TIMESTAMP,
+    driver_feedback_by VARCHAR2(100),
     incident_priority VARCHAR2(5),
     incident_status VARCHAR2(30)
+    ,trip_continuity_id VARCHAR2(64)
 );
 
 CREATE TABLE company_entities (
@@ -833,6 +860,21 @@ CREATE TABLE ratecards (
     night_allowance_after_11_pm NUMBER(12,2),
     garage_to_garage_kms       NUMBER(12,2),
     garage_to_garage_pct       NUMBER(10,4)
+    ,sr_no NUMBER
+    ,group_name VARCHAR2(120)
+    ,state VARCHAR2(120)
+    ,owner_type VARCHAR2(20)
+    ,owner_id VARCHAR2(40)
+    ,tenant_id VARCHAR2(40)
+    ,vendor_id VARCHAR2(40)
+    ,effective_from DATE
+    ,effective_to DATE
+    ,service_type VARCHAR2(120)
+    ,trip_type VARCHAR2(120)
+    ,status VARCHAR2(30)
+    ,approval_status VARCHAR2(30)
+    ,source_file VARCHAR2(255)
+    ,source_sheet VARCHAR2(120)
 );
 
 CREATE TABLE settings (
@@ -863,7 +905,100 @@ CREATE TABLE notifications (
     ,attempts         NUMBER(4) DEFAULT 0 NOT NULL
     ,last_attempt     TIMESTAMP
     ,error_message    VARCHAR2(1000)
+    ,guest_trip_access_id VARCHAR2(64)
 );
+
+CREATE TABLE guest_trip_access (
+    guest_trip_access_id VARCHAR2(64) PRIMARY KEY,
+    trip_continuity_id VARCHAR2(64),
+    booking_id VARCHAR2(40),
+    tenant_id VARCHAR2(40) NOT NULL,
+    guest_id VARCHAR2(60),
+    token_hash VARCHAR2(64) NOT NULL UNIQUE,
+    token_created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
+    token_expires_at TIMESTAMP NOT NULL,
+    first_used_at TIMESTAMP,
+    last_used_at TIMESTAMP,
+    revoked_at TIMESTAMP,
+    status VARCHAR2(20) DEFAULT 'ACTIVE' NOT NULL,
+    delivery_reference VARCHAR2(200),
+    created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
+    created_by VARCHAR2(100)
+);
+
+CREATE INDEX idx_guest_access_booking ON guest_trip_access(tenant_id, booking_id, status);
+
+CREATE TABLE guest_trip_sessions (
+    guest_session_id VARCHAR2(64) PRIMARY KEY,
+    guest_trip_access_id VARCHAR2(64) NOT NULL,
+    trip_continuity_id VARCHAR2(64),
+    booking_id VARCHAR2(40),
+    tenant_id VARCHAR2(40) NOT NULL,
+    session_hash VARCHAR2(64) NOT NULL UNIQUE,
+    created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
+    expires_at TIMESTAMP NOT NULL,
+    last_used_at TIMESTAMP,
+    revoked_at TIMESTAMP,
+    CONSTRAINT fk_guest_session_access FOREIGN KEY (guest_trip_access_id)
+        REFERENCES guest_trip_access(guest_trip_access_id)
+);
+
+CREATE INDEX idx_guest_sessions_access ON guest_trip_sessions(guest_trip_access_id, expires_at);
+
+CREATE TABLE trusted_driver_devices (
+    device_id VARCHAR2(120) PRIMARY KEY,
+    driver_id VARCHAR2(100) NOT NULL,
+    tenant_id VARCHAR2(40) NOT NULL,
+    vendor_id VARCHAR2(40),
+    device_key_id VARCHAR2(120) NOT NULL,
+    public_key VARCHAR2(4000) NOT NULL,
+    device_name VARCHAR2(200),
+    platform VARCHAR2(30),
+    provisioned_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
+    provisioned_by VARCHAR2(100) NOT NULL,
+    offline_authorized_until TIMESTAMP,
+    status VARCHAR2(20) DEFAULT 'ACTIVE' NOT NULL,
+    revoked_at TIMESTAMP,
+    revoked_by VARCHAR2(100),
+    last_online_validation_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
+    updated_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL
+);
+
+CREATE INDEX idx_trusted_devices_driver ON trusted_driver_devices(tenant_id, driver_id, status);
+CREATE UNIQUE INDEX uq_trusted_device_key ON trusted_driver_devices(device_key_id);
+CREATE UNIQUE INDEX uq_trusted_device_public_key ON trusted_driver_devices(public_key);
+
+CREATE TABLE trusted_device_challenges (
+    challenge_id VARCHAR2(64) PRIMARY KEY,
+    device_id VARCHAR2(120) NOT NULL,
+    driver_id VARCHAR2(100) NOT NULL,
+    tenant_id VARCHAR2(40) NOT NULL,
+    vendor_id VARCHAR2(40),
+    challenge_hash VARCHAR2(64) NOT NULL UNIQUE,
+    issued_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
+    expires_at TIMESTAMP NOT NULL,
+    used_at TIMESTAMP,
+    status VARCHAR2(20) DEFAULT 'ISSUED' NOT NULL
+);
+
+CREATE TABLE trusted_offline_authorizations (
+    offline_authorization_id VARCHAR2(64) PRIMARY KEY,
+    device_id VARCHAR2(120) NOT NULL,
+    device_key_id VARCHAR2(120) NOT NULL,
+    driver_id VARCHAR2(100) NOT NULL,
+    tenant_id VARCHAR2(40) NOT NULL,
+    vendor_id VARCHAR2(40),
+    authorization_epoch VARCHAR2(64) NOT NULL,
+    issued_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
+    expires_at TIMESTAMP NOT NULL,
+    status VARCHAR2(20) DEFAULT 'ACTIVE' NOT NULL,
+    revoked_at TIMESTAMP,
+    issued_by VARCHAR2(100) NOT NULL
+);
+
+CREATE INDEX idx_device_challenges_device ON trusted_device_challenges(device_id,status,expires_at);
+CREATE INDEX idx_offline_auth_device ON trusted_offline_authorizations(device_id,status,expires_at);
 
 -- ---------------------------------------------------------------------------
 -- OTP LOG (Super Admin initiated password resets; SOP section 3.3)
@@ -903,23 +1038,123 @@ CREATE TABLE user_sessions (
     last_activity TIMESTAMP NOT NULL,
     mobile_booking_id VARCHAR2(40),
     mobile_expires_at TIMESTAMP,
+    session_type VARCHAR2(20) DEFAULT 'web' NOT NULL,
+    device_id VARCHAR2(128),
     ip_address VARCHAR2(60)
 );
 
 CREATE INDEX idx_user_sessions_user ON user_sessions(user_id);
 
+CREATE TABLE driver_availability_sessions (
+    availability_id VARCHAR2(40) PRIMARY KEY,
+    tenant_id VARCHAR2(40) NOT NULL,
+    driver_id VARCHAR2(40) NOT NULL,
+    vendor_id VARCHAR2(40) NOT NULL,
+    status VARCHAR2(30) NOT NULL,
+    activated_at TIMESTAMP NOT NULL,
+    deactivated_at TIMESTAMP,
+    last_seen_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT SYSTIMESTAMP,
+    updated_at TIMESTAMP DEFAULT SYSTIMESTAMP
+);
+
+CREATE INDEX idx_driver_avail_driver ON driver_availability_sessions(tenant_id, driver_id, status);
+CREATE INDEX idx_driver_avail_vendor ON driver_availability_sessions(tenant_id, vendor_id, status);
+CREATE UNIQUE INDEX uq_driver_avail_active ON driver_availability_sessions (
+    CASE WHEN status IN ('IDEAL_NOW','ALLOCATED','ON_TRIP') THEN tenant_id END,
+    CASE WHEN status IN ('IDEAL_NOW','ALLOCATED','ON_TRIP') THEN driver_id END
+);
+
 CREATE TABLE gps_log (
     log_id        VARCHAR2(40) PRIMARY KEY,
-    booking_id    VARCHAR2(40) NOT NULL,
+    booking_id    VARCHAR2(40),
+    trip_continuity_id VARCHAR2(64),
     who           VARCHAR2(10) NOT NULL,
     lat           NUMBER(10,7) NOT NULL,
     lon           NUMBER(10,7) NOT NULL,
     distance_m    NUMBER(12,2),
     location_sync VARCHAR2(80),
     location_address VARCHAR2(500),
+    speed_kmh     NUMBER(10,2),
+    accuracy_m    NUMBER(10,2),
+    tracking_session_id VARCHAR2(64),
+    gps_event_id  VARCHAR2(80),
+    sequence_number NUMBER(12),
     captured_dt   TIMESTAMP NOT NULL
 );
 
 CREATE INDEX idx_gps_log_booking_time ON gps_log(booking_id, captured_dt);
+CREATE UNIQUE INDEX uq_gps_log_event ON gps_log(tracking_session_id, gps_event_id);
+
+CREATE TABLE tracking_sessions (
+    tracking_session_id VARCHAR2(64) PRIMARY KEY,
+    tenant_id           VARCHAR2(40) NOT NULL,
+    booking_id          VARCHAR2(40),
+    trip_continuity_id  VARCHAR2(64),
+    user_id             VARCHAR2(100) NOT NULL,
+    who                 VARCHAR2(10) NOT NULL,
+    tracking_token_hash VARCHAR2(64) NOT NULL,
+    status              VARCHAR2(20) DEFAULT 'ACTIVE' NOT NULL,
+    started_at          TIMESTAMP NOT NULL,
+    ended_at            TIMESTAMP,
+    last_sequence       NUMBER(12) DEFAULT 0 NOT NULL
+);
+
+CREATE INDEX idx_tracking_sessions_booking ON tracking_sessions(tenant_id, booking_id, status);
+CREATE UNIQUE INDEX uq_tracking_session_token ON tracking_sessions(tracking_session_id, tracking_token_hash);
+
+CREATE TABLE trip_continuity (
+    trip_continuity_id VARCHAR2(64) PRIMARY KEY,
+    trip_reference VARCHAR2(20) NOT NULL UNIQUE,
+    booking_id VARCHAR2(40),
+    tenant_id VARCHAR2(40) NOT NULL,
+    vendor_id VARCHAR2(40),
+    driver_id VARCHAR2(40),
+    vehicle_id VARCHAR2(40),
+    guest_id VARCHAR2(60),
+    trip_mode VARCHAR2(30) NOT NULL,
+    status VARCHAR2(30) NOT NULL,
+    actual_pickup_datetime TIMESTAMP,
+    actual_drop_datetime TIMESTAMP,
+    trip_started_at TIMESTAMP,
+    trip_ended_at TIMESTAMP,
+    start_odometer NUMBER(12,2),
+    end_odometer NUMBER(12,2),
+    created_source VARCHAR2(40),
+    offline_created VARCHAR2(1) DEFAULT 'N' NOT NULL,
+    sync_status VARCHAR2(30) DEFAULT 'SYNCED' NOT NULL,
+    device_id VARCHAR2(120),
+    driver_session_id VARCHAR2(120),
+    tracking_session_id VARCHAR2(64),
+    booking_linked_at TIMESTAMP,
+    booking_linked_by VARCHAR2(100),
+    created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
+    updated_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL
+);
+
+CREATE INDEX idx_trip_continuity_booking ON trip_continuity(tenant_id, booking_id);
+CREATE INDEX idx_trip_continuity_status ON trip_continuity(tenant_id, status, trip_mode);
+
+CREATE TABLE trip_events (
+    event_id VARCHAR2(64) PRIMARY KEY,
+    trip_continuity_id VARCHAR2(64) NOT NULL,
+    event_type VARCHAR2(40) NOT NULL,
+    event_sequence NUMBER(12) NOT NULL,
+    event_timestamp TIMESTAMP,
+    device_timestamp TIMESTAMP,
+    server_timestamp TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
+    actor_type VARCHAR2(30),
+    actor_id VARCHAR2(100),
+    device_id VARCHAR2(120),
+    payload CLOB,
+    idempotency_key VARCHAR2(120) NOT NULL,
+    sync_status VARCHAR2(30) DEFAULT 'SYNCED' NOT NULL,
+    created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
+    CONSTRAINT fk_trip_events_continuity FOREIGN KEY (trip_continuity_id)
+        REFERENCES trip_continuity(trip_continuity_id),
+    CONSTRAINT uq_trip_event_idempotency UNIQUE (trip_continuity_id, idempotency_key)
+);
+
+CREATE INDEX idx_trip_events_sequence ON trip_events(trip_continuity_id, event_sequence);
 
 COMMIT;

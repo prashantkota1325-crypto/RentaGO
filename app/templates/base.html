@@ -45,7 +45,7 @@
           {% if nav.tracking %}<a class="nav-link" href="/dashboards/tracking">Live Tracking</a>{% endif %}
           {% if nav.feedback %}<a class="nav-link" href="/feedback">Feedback</a>{% endif %}
           {% if nav.sla %}<a class="nav-link" href="/dashboards/sla">SLA Dashboard</a>{% endif %}
-          {% if nav.policies %}<a class="nav-link" href="/policies">Policies</a>{% endif %}
+          {% if nav.policies or user.role|lower in ['super admin', 'hq'] %}<a class="nav-link" href="/policies/dashboard">RentaGO Company Policies</a>{% endif %}
           {% if nav.masters %}<a class="nav-link" href="/masters">Masters</a>{% endif %}
           {% if nav.notifications %}<a class="nav-link" href="/notifications">Notifications</a>{% endif %}
            {% if nav.dashboards %}<a class="nav-link" href="/dashboards">Dashboard</a>{% endif %}
@@ -75,7 +75,8 @@
            <a class="nav-link" href="/dashboards/vendor/reports">Vendor Reports</a>
            {% endif %}
           <span class="navbar-text me-3">Signed in as <b>{{ user.name }}</b> ({{ user.role }})</span>
-          <a class="nav-link" href="/auth/profile">Profile</a>
+           <a class="nav-link" href="/auth/profile">Profile</a>
+           <a class="nav-link" href="/auth/about">About</a>
           <a class="nav-link" href="/auth/change-password">Change Password</a>
            {% endif %}
            <a class="btn btn-sm btn-outline-light" href="/auth/logout">Logout</a>
@@ -85,11 +86,20 @@
   </nav>
   {% endif %}
   <main class="container my-4">
+    {% if user %}<div class="mb-3 no-print"><a class="btn btn-outline-secondary btn-sm" href="/home" onclick="if (window.history.length > 1) { window.history.back(); return false; }">&larr; Back</a></div>{% endif %}
     {% block content %}{% endblock %}
   </main>
+  {% set product = product_branding() %}
+  <footer class="container text-center text-muted small py-3 mt-4 border-top no-print" aria-label="Product attribution">
+    <span class="fw-semibold">{{ product.name }}</span>
+    <span class="d-inline-block mx-1">·</span>
+    <span>{{ product.attribution }}</span>
+    <span class="d-inline-block mx-1">·</span>
+    <span>{{ product.copyright }} {{ product.rights }}</span>
+  </footer>
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script src="/static/js/phone-prefix.js"></script>
-  <script src="/static/js/guest-search.js"></script>
+  <script src="/static/js/guest-search.js?v=2"></script>
   <script src="/static/js/time-dd.js"></script>
   <script src="/static/js/allocation-search.js"></script>
   <script src="/static/js/sw-register.js"></script>

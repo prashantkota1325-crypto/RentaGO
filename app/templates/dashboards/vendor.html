@@ -15,7 +15,7 @@
         <tr>
           <td>{{ b.booking_id }}</td>
           <td>{{ b.company or '-' }}</td><td>{{ b.guest }}</td>
-          <td>{{ b.pickup_date }} {{ b.pickup_time }}</td>
+          <td>{{ b.pickup_date|display_date }} {{ b.pickup_time|display_time }}</td>
           <td>{{ b.pickup_address or '-' }}{% for s in b.stops if s.label.startswith('Pickup') %}<br><small>{{ s.label }}: {{ s.lat }}, {{ s.lon }}</small>{% endfor %}</td>
           <td>{{ b.drop_address or '-' }}{% for s in b.stops if s.label.startswith('Drop') %}<br><small>{{ s.label }}: {{ s.lat }}, {{ s.lon }}</small>{% endfor %}</td>
           <td><span class="badge {% if b.status == '1-Pending' %}bg-warning text-dark{% elif b.status == '2-Confirmed' %}bg-success{% else %}bg-danger{% endif %}">{{ b.status }}</span>

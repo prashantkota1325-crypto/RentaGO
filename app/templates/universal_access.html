@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}RentaGO Secure Access{% endblock %}
+{% block content %}
+<div class="row justify-content-center mt-5"><div class="col-md-6 col-11"><div class="card shadow"><div class="card-body text-center">
+  <h2>RentaGO</h2>
+  {% if error %}<div class="alert alert-danger">{{ error }}</div>
+  {% else %}
+  <p class="text-muted">Secure Trip &amp; Live Location</p>
+  {% if access.booking_id %}<p><strong>Booking:</strong> {{ access.booking_id }}</p>{% endif %}
+  {% if not download_page %}<p>Open the RentaGO Android app to continue.</p><a class="btn btn-primary btn-lg" href="{{ app_uri }}">Open RentaGO App</a>{% endif %}
+  {% if download_url %}<p class="mt-3">If the app is not installed, continue to the download page.</p><a class="btn btn-outline-primary" href="{{ download_url }}">Continue to Download</a>{% endif %}
+  {% if download_page %}<a class="btn btn-primary btn-lg mt-2" href="/access/download/apk">Download RentaGO LAB App</a>{% endif %}
+  {% if download_page %}<div class="alert alert-info">Install the RentaGO Android app, then open this link again to continue.</div>{% endif %}
+  {% endif %}
+</div></div></div></div>
+{% endblock %}

@@ -25,7 +25,7 @@ def find_mobile_user(cur, identity, role):
         "SELECT user_id,name,email,mobile,role,emp_id,mobile_pin_hash,status FROM users "
         "WHERE status='Active' AND LOWER(role)=LOWER(:1) "
         "AND (UPPER(user_id)=UPPER(:2) OR REPLACE(mobile,' ','')=REPLACE(:2,' ',''))",
-        (role, identity.strip()),
+        (role, identity.strip(), identity.strip()),
     )
     return cur.fetchone()
 

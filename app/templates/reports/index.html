@@ -64,7 +64,7 @@
         Company: {{ r.company_name or '-' }} ({{ r.company_id or '-' }}) | Entity: {{ r.entity_name or '-' }}<br>
         Guest: {{ r.guest_name_1 or '-' }} | Pickup: {{ r.pickup_address or '-' }} | Drop: {{ r.drop_address or '-' }}<br>
         Cities: {{ r.pickup_city or '-' }} &rarr; {{ r.drop_city or '-' }} | Pickup: {{ r.pickup_date or '-' }} {{ r.pickup_time or '' }}<br>
-        Trip: {% if r.trip_id %}<a href="/trips/{{ r.trip_id }}">{{ r.trip_id }}</a>{% else %}-{% endif %} | {{ r.trip_status or '-' }} | Actual: {{ r.actual_kms or 0 }} km / {{ r.actual_hrs or 0 }} hrs<br>
+        Trip: {% if r.trip_id %}<a href="/trips/{{ r.trip_id }}">{{ r.trip_id }}</a>{% else %}-{% endif %} | {{ r.trip_status or '-' }} | Actual: {{ r.actual_kms or 0 }} km / {{ r.actual_hrs|duration_words if r.actual_hrs is not none else '-' }}<br>
         Feedback: {{ r.guest_rating or '-' }}/5 | {{ r.guest_feedback or '-' }}<br>
         Safety: {{ r.safety_status or '-' }} | Incident: {{ r.incident_priority or '-' }} | Ownership: {{ r.feedback_owner_group or '-' }}</td>
       <td>Client Invoice: {% if r.client_invoice_id %}<a href="/invoices/{{ r.client_invoice_id }}">{{ r.client_invoice_id }}</a>{% else %}-{% endif %}<br>

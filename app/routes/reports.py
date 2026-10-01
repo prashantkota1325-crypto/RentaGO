@@ -19,6 +19,7 @@ from ..templating import templates
 from ..db import get_connection
 from ..audit import audit
 from ..scope import visible_booking_ids, can_view
+from ..scope import authorization_tenant
 from ..auth import FEEDBACK_EXTERNAL_ROLES
 
 router = APIRouter(prefix="/reports")
@@ -34,15 +35,26 @@ def vendor_compliance(request: Request, vendor_id: str = ""):
     role = (user.get("role") or "").strip().lower()
     if role in {"corporate admin", "corporate booking user", "corporate manager", "corporate viewer", "guest", "driver"}:
         return RedirectResponse(url="/home?msg=access-denied", status_code=303)
+    role = (user.get("role") or "").strip().lower()
     is_vendor = (user.get("role") or "").strip().lower() in {"vendor", "vendor admin", "vendor operations", "vendor viewer"}
     conn = get_connection()
     cur = conn.cursor()
-    cur.execute("SELECT vendor_id, vendor_name FROM vendors WHERE (status IS NULL OR UPPER(status)='ACTIVE') ORDER BY vendor_name")
+    if is_vendor:
+        org_id = (user.get("organization_id") or "").strip()
+        tenant_id = authorization_tenant(user)
+        if not tenant_id or not org_id.lower().startswith("vend-"):
+            conn.close()
+            return RedirectResponse(url="/home?msg=access-denied", status_code=303)
+        cur.execute("SELECT vendor_id, vendor_name FROM vendors WHERE vendor_id=:1 AND tenant_id=:2 AND (status IS NULL OR UPPER(status)='ACTIVE')", (org_id[5:], tenant_id))
+    else:
+        tenant_id = user.get("tenant_id")
+        if tenant_id and role not in {"super admin", "hq"}:
+            cur.execute("SELECT vendor_id, vendor_name FROM vendors WHERE tenant_id=:1 AND (status IS NULL OR UPPER(status)='ACTIVE') ORDER BY vendor_name", (tenant_id,))
+        else:
+            cur.execute("SELECT vendor_id, vendor_name FROM vendors WHERE (status IS NULL OR UPPER(status)='ACTIVE') ORDER BY vendor_name")
     vendors = [{"id": r[0], "name": r[1]} for r in cur.fetchall()]
     if is_vendor:
-        cur.execute("SELECT vendor_id FROM vendors WHERE UPPER(TRIM(vendor_name))=UPPER(TRIM(:1))", (user.get("company_name") or user.get("company") or "",))
-        vendor_row = cur.fetchone()
-        vendor_id = vendor_row[0] if vendor_row else ""
+        vendor_id = vendors[0]["id"] if vendors else ""
     vehicles, drivers = [], []
     today = date.today()
     due_date = today + timedelta(days=30)
@@ -58,7 +70,7 @@ def vendor_compliance(request: Request, vendor_id: str = ""):
         return "Valid"
 
     if vendor_id:
-        cur.execute("SELECT * FROM vehicles WHERE vendor_id=:1 ORDER BY reg_number", (vendor_id,))
+        cur.execute("SELECT * FROM vehicles WHERE vendor_id=:1 AND tenant_id=:2 ORDER BY reg_number", (vendor_id, tenant_id))
         cols = [d[0].lower() for d in cur.description]
         for row in cur.fetchall():
             item = dict(zip(cols, row))
@@ -69,7 +81,7 @@ def vendor_compliance(request: Request, vendor_id: str = ""):
                 "PUC": expiry_status(item.get("puc_exp")),
             }
             vehicles.append(item)
-        cur.execute("SELECT * FROM drivers WHERE vendor_id=:1 ORDER BY driver_name", (vendor_id,))
+        cur.execute("SELECT * FROM drivers WHERE vendor_id=:1 AND tenant_id=:2 ORDER BY driver_name", (vendor_id, tenant_id))
         cols = [d[0].lower() for d in cur.description]
         for row in cur.fetchall():
             item = dict(zip(cols, row))
@@ -168,12 +180,15 @@ REPORT_COLS = [
     ("vendor_paid", "Vendor Paid"), ("account_status", "Account Status"),
     ("status", "Booking Status"), ("booked_by_step2", "Step 2 Booked By"),
     ("booked_by_step3", "Step 3 Booked By"),
+    ("entry_mode", "Entry Mode"), ("post_trip_reason", "Post-Trip Reason"),
+    ("actual_start_at", "Recorded Actual Start"), ("actual_end_at", "Recorded Actual End"),
 ]
 
 _BOOKING_KEYS = ["booking_id", "booking_date", "booking_type", "company_id", "company_name",
                  "entity_name", "guest_name_1", "guest_contact", "admin_name", "pickup_address",
                  "drop_address", "pickup_city", "drop_city", "pickup_date", "pickup_time",
-                 "vehicle_type", "done_by_booking"]
+                  "vehicle_type", "done_by_booking", "entry_mode", "post_trip_reason",
+                  "actual_start_at", "actual_end_at"]
 _TRIP_KEYS = ["trip_id", "trip_status", "actual_start_dt", "actual_end_dt", "pickup_start_km",
               "drop_end_km", "actual_kms", "actual_hrs", "extra_kms", "extra_hrs",
               "guest_rating", "guest_feedback", "safety_status", "incident_priority",
@@ -214,9 +229,9 @@ def _run_report(cur, ftype, fci, sdate, edate, tenant_id=None):
     if ftype != "All Types":
         where.append(f"UPPER(TRIM(b.booking_type))=UPPER(TRIM({bind(ftype)}))")
     if fci != "All":
-        b = bind(fci)
-        where.append(f"(UPPER(TRIM(b.company_name))=UPPER(TRIM({b})) "
-                     f"OR UPPER(TRIM(b.guest_name_1))=UPPER(TRIM({b})))")
+        b_company = bind(fci); b_guest = bind(fci)
+        where.append(f"(UPPER(TRIM(b.company_name))=UPPER(TRIM({b_company})) "
+                     f"OR UPPER(TRIM(b.guest_name_1))=UPPER(TRIM({b_guest})))")
     if sdate and edate:
         where.append(f"b.pickup_date BETWEEN {bind(sdate)} AND {bind(edate)}")
     elif sdate:
@@ -271,14 +286,22 @@ def _run_report(cur, ftype, fci, sdate, edate, tenant_id=None):
     return rows
 
 
-def _dropdowns(cur):
+def _dropdowns(cur, tenant_id=None):
+    tenant_where = " AND tenant_id=:1" if tenant_id else ""
+    params = (tenant_id,) if tenant_id else None
     cur.execute("SELECT DISTINCT booking_type FROM bookings "
-                "WHERE booking_type IS NOT NULL ORDER BY booking_type")
+                "WHERE booking_type IS NOT NULL" + tenant_where + " ORDER BY booking_type", params)
     types = [str(r[0]).strip() for r in cur.fetchall() if str(r[0] or "").strip()]
-    cur.execute(
-        "SELECT name FROM (SELECT DISTINCT TRIM(company_name) AS name FROM bookings "
-        "UNION SELECT DISTINCT TRIM(guest_name_1) AS name FROM bookings) "
-        "WHERE name IS NOT NULL ORDER BY name")
+    if tenant_id:
+        cur.execute(
+            "SELECT name FROM (SELECT DISTINCT TRIM(company_name) AS name FROM bookings WHERE tenant_id=:1 "
+            "UNION SELECT DISTINCT TRIM(guest_name_1) AS name FROM bookings WHERE tenant_id=:1) "
+            "WHERE name IS NOT NULL ORDER BY name", (tenant_id,))
+    else:
+        cur.execute(
+            "SELECT name FROM (SELECT DISTINCT TRIM(company_name) AS name FROM bookings "
+            "UNION SELECT DISTINCT TRIM(guest_name_1) AS name FROM bookings) "
+            "WHERE name IS NOT NULL ORDER BY name")
     cis = [str(r[0]).strip() for r in cur.fetchall() if str(r[0] or "").strip()]
     return types, cis
 
@@ -292,13 +315,17 @@ def report_page(request: Request):
         return RedirectResponse(url="/dashboards/vendor", status_code=303)
     if module_level(user, "Reports") is None:
         return RedirectResponse(url="/home?msg=access-denied", status_code=303)
+    role = (user.get("role") or "").strip().lower()
+    tenant_id = authorization_tenant(user)
+    if role in {"corporate admin", "corporate booking user", "corporate manager", "corporate viewer"} and not tenant_id:
+        return RedirectResponse(url="/home?msg=access-denied", status_code=303)
 
     ftype, fci, sdate, edate = _filters(request)
     conn = get_connection()
     cur = conn.cursor()
     visible = visible_booking_ids(user, cur)
-    types, cis = _dropdowns(cur)
-    tenant_id = None if (user.get("role") or "").strip().lower() == "super admin" else user.get("tenant_id")
+    types, cis = _dropdowns(cur, None if role in {"super admin", "hq"} else (tenant_id or user.get("tenant_id")))
+    tenant_id = None if role in {"super admin", "hq"} else (tenant_id or user.get("tenant_id"))
     rows = _run_report(cur, ftype, fci, sdate, edate, tenant_id)
     rows = [r for r in rows if can_view(visible, str(r.get("booking_id") or ""))]
     conn.close()
@@ -330,12 +357,16 @@ def report_export(request: Request):
         return RedirectResponse(url="/dashboards/vendor", status_code=303)
     if module_level(user, "Reports") is None:
         return RedirectResponse(url="/home?msg=access-denied", status_code=303)
+    role = (user.get("role") or "").strip().lower()
+    tenant_id = authorization_tenant(user)
+    if role in {"corporate admin", "corporate booking user", "corporate manager", "corporate viewer"} and not tenant_id:
+        return RedirectResponse(url="/home?msg=access-denied", status_code=303)
 
     ftype, fci, sdate, edate = _filters(request)
     conn = get_connection()
     cur = conn.cursor()
     visible = visible_booking_ids(user, cur)
-    tenant_id = None if (user.get("role") or "").strip().lower() == "super admin" else user.get("tenant_id")
+    tenant_id = None if role in {"super admin", "hq"} else (tenant_id or user.get("tenant_id"))
     rows = _run_report(cur, ftype, fci, sdate, edate, tenant_id)
     rows = [r for r in rows if can_view(visible, str(r.get("booking_id") or ""))]
     audit(conn, user, "Report Exported", ftype,

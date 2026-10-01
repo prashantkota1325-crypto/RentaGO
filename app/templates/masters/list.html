@@ -2,6 +2,16 @@
 {% block title %}{{ cfg.title }}{% endblock %}
 {% block content %}
 <h2>{{ cfg.title }} <span class="text-muted small fs-6">{{ total }} records</span></h2>
+{% if cfg.key == 'ratecards' %}<a class="btn btn-outline-primary mb-3" href="/masters/ratecards/import?owner_type=VENDOR">Upload Vendor Rate Chart</a>{% elif cfg.key == 'individual-ratecards' %}<a class="btn btn-outline-primary mb-3" href="/masters/ratecards/import?owner_type=INDIVIDUAL">Upload Individual Rate Chart</a>{% elif cfg.key == 'company-ratecards' %}<a class="btn btn-outline-primary mb-3" href="/masters/ratecards/import?owner_type=COMPANY">Upload Company Rate Chart</a>{% endif %}
+{% if cfg.key == 'vendors' and level == 'F' %}
+<form method="post" action="/masters/vendors/import" enctype="multipart/form-data" class="card card-body mb-3">
+  <div class="row g-2 align-items-end">
+    <div class="col-md-6"><label class="form-label mb-1">Upload Vendor Master (Code sheet)</label><input class="form-control" type="file" name="file" accept=".xlsx,.xlsm" required></div>
+    <div class="col-md-auto"><button class="btn btn-outline-primary">Upload Code Sheet</button></div>
+  </div>
+  <div class="form-text">Uses the workbook sheet named <code>Code</code>; Company Id is the Vendor ID.</div>
+</form>
+{% endif %}
 
 {% set msg = request.query_params.get('msg', '') %}
 {% if msg %}
@@ -22,7 +32,20 @@
     {% for f in cfg.filters %}
     <div class="col-md-2">
       <label class="form-label mb-0 small text-muted">{{ f.label }}</label>
+      {% if f.options %}
+      <select name="{{ f.name }}" class="form-select">
+        <option value="">All</option>
+        {% for option in f.options %}<option value="{{ option }}" {% if option == f.value %}selected{% endif %}>{{ option }}</option>{% endfor %}
+      </select>
+      {% else %}
       <input name="{{ f.name }}" value="{{ f.value }}" class="form-control" placeholder="contains...">
+      {% endif %}
+    </div>
+    {% endfor %}
+    {% for f in cfg.date_filters %}
+    <div class="col-md-2">
+      <label class="form-label mb-0 small text-muted">{{ f.label }}</label>
+      <input type="date" name="{{ f.name }}" value="{{ f.value }}" class="form-control">
     </div>
     {% endfor %}
     <div class="col-md-auto d-flex gap-2">
@@ -52,13 +75,13 @@
             {% if row[col] == 'Active' %}<span class="badge bg-success">{{ row[col] }}</span>
             {% else %}<span class="badge bg-secondary">{{ row[col] or '-' }}</span>{% endif %}
            {% elif col in ['login_dt', 'logout_dt'] %}{{ row[col]|hour_minute or '-' }}
-           {% elif col == 'hours_worked' %}{{ row[col]|duration_hm or '00:00' }}
-           {% elif loop.first %}<a href="/masters/{{ cfg.key }}/{{ row[cfg.list[0][0]] }}/edit">{{ row[col] }}</a>
+           {% elif col == 'hours_worked' %}{{ row[col]|duration_words or '0 mins' }}
+            {% elif loop.first %}<a href="/masters/{{ cfg.key }}/{{ row[cfg.pk] }}/edit">{{ row[col] }}</a>
           {% else %}{{ row[col] if row[col] is not none else '-' }}{% endif %}
         </td>
       {% endfor %}
       {% if level == 'F' %}
-      <td><a class="btn btn-sm btn-outline-primary" href="/masters/{{ cfg.key }}/{{ row[cfg.list[0][0]] }}/edit">Edit</a></td>
+       <td><a class="btn btn-sm btn-outline-primary" href="/masters/{{ cfg.key }}/{{ row[cfg.pk] }}/edit">Edit</a></td>
       {% endif %}
     </tr>
   {% else %}

@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Company Rate Chart{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div><h2 class="mb-1">Company Rate Chart</h2><div class="text-muted">Header-ready tool. Company Rate Chart data will be enabled after the company workbook is supplied.</div></div>
+  <a class="btn btn-outline-secondary" href="/masters">Back to Masters</a>
+</div>
+<div class="alert alert-info">This is separate from Vendor Rate Chart. No Vendor Ratecard rows are displayed or modified here.</div>
+<div class="card"><div class="card-header"><strong>Canonical Company Rate Chart Headers</strong></div><div class="table-responsive"><table class="table table-sm table-striped mb-0"><thead><tr>{% for header in headers %}<th>{{ header }}</th>{% endfor %}</tr></thead><tbody><tr><td colspan="{{ headers|length }}" class="text-center text-muted py-4">No Company Rate Chart file has been provided yet.</td></tr></tbody></table></div></div>
+{% endblock %}

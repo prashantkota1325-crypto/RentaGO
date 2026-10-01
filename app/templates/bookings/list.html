@@ -4,6 +4,8 @@
 {% from "_phone_field.html" import phone_field %}
 {% from "_time_select.html" import time_select %}
 <h2>Bookings</h2>
+<style>.booking-form-divider{height:8px;background:#16386e;border-radius:2px;margin:8px 0 4px;}</style>
+{% if show_kpis %}{% include "_booking_kpis.html" %}{% endif %}
 {% if sla_alerts %}
 <div class="alert alert-danger">
   <strong>SLA Alerts ({{ sla_alerts|length }})</strong>
@@ -54,6 +56,7 @@
 
 <div class="toolbar">
   <span class="text-muted small">Showing {{ bookings|length }} of {{ total_count }} bookings (latest 10 per page)</span>
+  <a class="btn btn-outline-primary" href="/bookings/smart">Smart Booking</a>
   <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#newBooking">+ New Booking</button>
 </div>
 <div class="table-responsive-cards">
@@ -62,12 +65,15 @@
     <th colspan="2">Step 1 - Booking</th><th colspan="2">Steps 2 &amp; 3 - Allocation</th><th>Status &amp; Ownership</th>
   </tr></thead>
   <tbody>
-  {% for b in bookings %}
+   {% for b in bookings %}
     <tr>
       <td colspan="2"><a href="/bookings/{{ b.booking_id }}"><strong>{{ b.booking_id }}</strong></a><br>
-        {{ b.booking_date }} | {{ b.booking_type }}<br>{{ b.company_name or '-' }} | {{ b.entity_name or '-' }}<br>
+        {{ b.booking_date|display_date }} | {{ b.booking_type }}<br>{{ b.company_name or '-' }} | {{ b.entity_name or '-' }}<br>
         Guest: {{ b.guest_name or '-' }} | Contact: {{ b.guest_contact }}<br>Pickup: {{ b.pickup_address or '-' }}<br>Drop: {{ b.drop_address or '-' }}<br>
-        Cities: {{ b.pickup_city or '-' }} &rarr; {{ b.drop_city or '-' }}<br>Pickup: {{ b.pickup_date }} {{ b.pickup_time or '' }}<br>
+        Cities: {{ b.pickup_city or '-' }} &rarr; {{ b.drop_city or '-' }}<br>
+        Pickup: {{ b.pickup_date|display_date }} {{ b.pickup_time|display_time }}<br>
+        Drop: {{ b.drop_date|display_date }} {{ b.drop_time|display_time }}<br>
+        Package Type: {{ b.package_type or '-' }}<br>Vehicle Type: {{ b.vehicle_type or '-' }}<br>
         <span class="small text-muted">Booked By / {{ b.booked_by_step1 }}</span></td>
       <td colspan="2">{% if show_vendor_name %}Vendor: {{ b.vendor_name or '-' }}<br>{% endif %}Driver: {{ b.driver_name or '-' }}<br>
         Driver Contact: {{ b.driver_contact or '-' }}<br>Vehicle: {{ b.vehicle_no or '-' }}<br>
@@ -76,7 +82,10 @@
       <td><div>Step 1: <span class="badge bg-secondary">{{ b.step1_state }}</span></div>
         <div>Step 2: <span class="badge bg-secondary">{{ b.step2_state }}</span></div>
         <div>Step 3: <span class="badge bg-secondary">{{ b.step3_state }}</span></div>
-        <div class="mt-1"><span class="badge {{ b.status_class }}">{{ b.status_display }}</span></div></td>
+        <div class="mt-1"><span class="badge {{ b.status_class }}">{{ b.status_display }}</span></div>
+         <div class="small mt-2"><div class="fw-semibold">Trip Status Reason: {{ b.reason or '-' }}</div>
+         {% for marker in ['Driver <= 2hrs - Live Location','Driver <= 15mins Reached Location','Guest <= 15mins Live Location'] %}{% set received_at = (b.guest_gps_ts or b.guest_gps) if marker.startswith('Guest') else (b.driver_gps_ts or b.driver_gps) %}<div class="{% if received_at %}text-primary{% else %}text-muted{% endif %}">{{ marker }} - {{ 'Received' if received_at else 'Not Received' }}</div>{% endfor %}
+         {% for marker in ['Guest - Start Trip','Driver - Start Trip','Trip in Progress','Guest - End Trip','Driver - End Trip'] %}<div class="{% if marker in b.status_markers %}text-primary{% else %}text-muted{% endif %}">{{ marker }} - {{ 'Yes' if marker in b.status_markers else 'No' }}</div>{% endfor %}<div class="{% if 'Pickup Time Passed - Red Flag: Yes' in b.status_markers %}text-danger fw-semibold{% else %}text-muted{% endif %}">{% if 'Pickup Time Passed - Red Flag: Yes' in b.status_markers %}Pickup Time Passed - Red Flag{% else %}Pickup Time Passed - No{% endif %}</div>{% if 'Pickup Time Passed - Red Flag: Yes' in b.status_markers %}<div class="text-danger small">Reason: {{ b.reason }}</div>{% endif %}</div></td>
     </tr>
   {% endfor %}
   </tbody>
@@ -100,10 +109,11 @@
           <option>Corporate</option><option>Corporate Event</option><option>Employee Transport</option>
           <option>Individual</option><option>Individual Event</option><option>Dummy</option></select></div>
         <div class="col-md-4"><label>Company</label><input name="company_name" data-company-search class="form-control" placeholder="Search companies... (fills Id + Entity)"></div>
-        <input type="hidden" name="company_id" value="">
+        <div class="col-md-2"><label>Company ID</label><input name="company_id" class="form-control" readonly></div>
         <div class="col-md-4"><label>Company Entity / Legal Entity</label><select name="entity_name" class="form-select"><option value="">Select Company first</option></select></div>
-        <div class="col-md-3"><label>Reference Code</label><input name="reference_code" class="form-control"></div>
-        <div class="col-md-3"><label>Reference No.</label><input name="ref_no" class="form-control"></div>
+         <div class="col-md-3"><label>Reference Code</label><input name="reference_code" class="form-control"></div>
+         <div class="col-md-3"><label>Reference No.</label><input name="ref_no" class="form-control"></div>
+         <div class="col-12 booking-form-divider" aria-hidden="true"></div>
 
         <div class="col-md-4"><label>Guest Name 1</label><input name="guest_name" data-guest-search class="form-control" placeholder="Search employees + individuals..."></div>
         <div class="col-md-4"><label>Emp/Guest ID</label><input name="emp_guest_id" class="form-control"></div>
@@ -122,10 +132,11 @@
           </select></div>
         <div class="col-md-4"><label>Request Received Time</label>
           <input name="request_received_time" type="datetime-local" class="form-control"></div>
-        <div class="col-md-4"><label>Confirmation Sent Via</label>
-          <select name="email_sent" class="form-select">
-            <option value=""></option><option>Email</option><option>WhatsApp</option><option>SMS</option><option>Call</option>
-          </select></div>
+         <div class="col-md-4"><label>Confirmation Sent Via</label>
+           <select name="email_sent" class="form-select">
+             <option value=""></option><option>Email</option><option>WhatsApp</option><option>SMS</option><option>Call</option>
+           </select></div>
+         <div class="col-12 booking-form-divider" aria-hidden="true"></div>
 
         <h6 class="booking-section-title mt-2">2. Pickup Details &mdash; Country, State, City, Address (GPS)</h6>
         <div class="col-md-4"><label>Country</label>

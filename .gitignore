@@ -34,3 +34,19 @@ import/import_data.sql
 
 # Temporary/local test script
 test_fix.py
+
+# LAB / local runtime artifacts
+lab_cookies.txt
+*.log.err
+phase24_lock_capture.log.err
+
+# Local development / test data
+tests/fixtures/
+*.backup
+
+# Mobile build/project artifacts
+rentago_mobile_android/
+
+
+# Business data / vendor rate workbook
+Rentago Rate Chart Format-Vendor.xlsx

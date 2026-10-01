@@ -24,7 +24,7 @@ from fastapi.templating import Jinja2Templates
 from ..auth import current_user, module_level
 from ..templating import templates
 from ..db import get_connection
-from ..scope import visible_booking_ids, can_view, OPERATOR_ROLES, CORPORATE_PORTAL_ROLES
+from ..scope import visible_booking_ids, can_view, OPERATOR_ROLES, CORPORATE_PORTAL_ROLES, authorization_tenant
 from .. import sla
 from ..gps import gps_report
 from .. import notify
@@ -43,6 +43,13 @@ ACTIVE_TRIP_REASONS = (
 
 def _guard(request, user, module):
     """Redirect to /home when the role has no access to the dashboard module."""
+    role = (user.get("role") or "").strip().lower()
+    if role in CORPORATE_PORTAL_ROLES and module.lower() != "customer 360":
+        return RedirectResponse(url="/home?msg=access-denied", status_code=303)
+    if role in {"vendor", "vendor admin", "vendor operations", "vendor viewer"} and module.lower() != "vendor dashboard":
+        return RedirectResponse(url="/home?msg=access-denied", status_code=303)
+    if role in {"guest", "driver"}:
+        return RedirectResponse(url="/home?msg=access-denied", status_code=303)
     if module_level(user, module) is None:
         return RedirectResponse(url="/home?msg=access-denied", status_code=303)
     return None
@@ -300,7 +307,7 @@ def vendor_dashboard(request: Request):
     conn = get_connection()
     cur = conn.cursor()
     vendor_rows = []
-    if (user.get("role") or "").strip().lower() == "vendor":
+    if (user.get("role") or "").strip().lower() in {"vendor", "vendor admin", "vendor operations", "vendor viewer"}:
         visible = visible_booking_ids(user, cur)
         cur.execute(
             "SELECT booking_id, guest_name_1, company_name, pickup_date, pickup_time, pickup_address, pickup_1, pickup_2, pickup_3, pickup_4, "
@@ -351,10 +358,17 @@ def customer360_dashboard(request: Request, company: str = ""):
     cur = conn.cursor()
     role = (user.get("role") or "").strip().lower()
     is_corporate = role in CORPORATE_PORTAL_ROLES
+    corporate_id = ""
     if is_corporate:
-        # Never trust the query-string company for an external portal.
-        company = (user.get("company") or user.get("company_name") or "").strip()
-        companies = [company] if company else []
+        org_id = (user.get("organization_id") or "").strip()
+        tenant_id = authorization_tenant(user)
+        if not tenant_id or not org_id.lower().startswith("corp-"):
+            conn.close()
+            return RedirectResponse(url="/home?msg=access-denied", status_code=303)
+        corporate_id = org_id[5:]
+        cur.execute("SELECT company_name FROM companies WHERE company_id=:1 AND tenant_id=:2 AND (status IS NULL OR UPPER(status)='ACTIVE')", (corporate_id, tenant_id))
+        companies = [r[0] for r in cur.fetchall()]
+        company = companies[0] if companies else ""
     else:
         cur.execute(
             "SELECT company_name FROM companies WHERE company_name IS NOT NULL "
@@ -366,7 +380,18 @@ def customer360_dashboard(request: Request, company: str = ""):
         company = companies[0]
 
     info, stats, recent, invoices = None, {}, [], []
-    if company:
+    if company and is_corporate:
+        cur.execute("SELECT company_id, company_name, industry, city, state, credit_limit, credit_days, account_manager, status FROM companies WHERE company_id=:1 AND tenant_id=:2", (corporate_id, tenant_id))
+        row = cur.fetchone()
+        if row:
+            info = dict(zip(("company_id", "name", "industry", "city", "state", "credit_limit", "credit_days", "account_manager", "status"), row))
+        cur.execute("SELECT COUNT(*), SUM(CASE WHEN booking_status LIKE '1-%' THEN 1 ELSE 0 END), SUM(CASE WHEN booking_status LIKE '2-%' THEN 1 ELSE 0 END), SUM(CASE WHEN booking_status LIKE '3-%' THEN 1 ELSE 0 END) FROM bookings WHERE tenant_id=:1 AND (corporate_id=:2 OR company_id=:2)", (tenant_id, corporate_id))
+        s = cur.fetchone(); stats = {"total": s[0] or 0, "pending": s[1] or 0, "confirmed": s[2] or 0, "cancelled": s[3] or 0}
+        cur.execute("SELECT booking_id, guest_name_1, pickup_date, booking_status FROM bookings WHERE tenant_id=:1 AND (corporate_id=:2 OR company_id=:2) ORDER BY booking_id DESC FETCH FIRST 15 ROWS ONLY", (tenant_id, corporate_id))
+        recent = [dict(zip(("booking_id", "guest", "pickup_date", "status"), r)) for r in cur.fetchall()]
+        cur.execute("SELECT i.invoice_id, i.booking_id, (SELECT MIN(t.trip_id) FROM trips t WHERE t.booking_id=i.booking_id), i.invoice_status, i.payment_status, i.final_amount FROM invoices i JOIN bookings b ON b.booking_id=i.booking_id WHERE b.tenant_id=:1 AND (b.corporate_id=:2 OR b.company_id=:2) ORDER BY i.invoice_id DESC FETCH FIRST 15 ROWS ONLY", (tenant_id, corporate_id))
+        invoices = [dict(zip(("invoice_id", "booking_id", "trip_id", "invoice_status", "payment_status", "final_amount"), r)) for r in cur.fetchall()]
+    elif company:
         cur.execute(
             "SELECT company_id, company_name, industry, city, state, credit_limit, "
             "credit_days, account_manager, status FROM companies "
@@ -654,7 +679,11 @@ def sla_dashboard(request: Request):
 
 
 def _vendor_id_for_user(cur, user):
-    cur.execute("SELECT vendor_id FROM vendors WHERE UPPER(TRIM(vendor_name))=UPPER(TRIM(:1))", (user.get("company_name") or user.get("company") or "",))
+    org_id = (user.get("organization_id") or "").strip()
+    tenant_id = authorization_tenant(user)
+    if not tenant_id or not org_id.lower().startswith("vend-"):
+        return None
+    cur.execute("SELECT vendor_id FROM vendors WHERE vendor_id=:1 AND tenant_id=:2", (org_id[5:], tenant_id))
     row = cur.fetchone()
     return row[0] if row else None
 
@@ -667,9 +696,9 @@ def vendor_resources(request: Request, edit_driver: str = "", edit_vehicle: str 
     conn = get_connection(); cur = conn.cursor(); vendor_id = _vendor_id_for_user(cur, user)
     if not vendor_id:
         conn.close(); return RedirectResponse("/dashboards/vendor?msg=vendor-not-found", status_code=303)
-    cur.execute("SELECT driver_id,driver_name,mobile,license_no,license_expiry,languages_known,compliance_status,status FROM drivers WHERE vendor_id=:1 ORDER BY driver_name", (vendor_id,))
+    cur.execute("SELECT driver_id,driver_name,mobile,license_no,license_expiry,languages_known,compliance_status,status FROM drivers WHERE vendor_id=:1 AND tenant_id=:2 ORDER BY driver_name", (vendor_id, user.get("tenant_id")))
     drivers = [dict(zip(("id","name","mobile","license","expiry","languages","compliance","status"), r)) for r in cur.fetchall()]
-    cur.execute("SELECT vehicle_id,reg_number,make,model,category,insurance_exp,permit_exp,fitness_exp,puc_exp,compliance_status,status FROM vehicles WHERE vendor_id=:1 ORDER BY reg_number", (vendor_id,))
+    cur.execute("SELECT vehicle_id,reg_number,make,model,category,insurance_exp,permit_exp,fitness_exp,puc_exp,compliance_status,status FROM vehicles WHERE vendor_id=:1 AND tenant_id=:2 ORDER BY reg_number", (vendor_id, user.get("tenant_id")))
     vehicles = [dict(zip(("id","reg","make","model","category","insurance","permit","fitness","puc","compliance","status"), r)) for r in cur.fetchall()]
     driver_edit = next((d for d in drivers if str(d["id"]) == edit_driver), {})
     vehicle_edit = next((v for v in vehicles if str(v["id"]) == edit_vehicle), {})
@@ -687,7 +716,7 @@ def vendor_billing(request: Request):
         conn.close(); return RedirectResponse("/dashboards/vendor?msg=vendor-not-found", status_code=303)
     cur.execute("SELECT vendor_invoice_id,invoice_number,booking_id,invoice_date,toll,parking,extra_kms,extra_hours,other_expenses,total_amount,status,notes FROM vendor_invoices WHERE vendor_id=:1 AND tenant_id=:2 ORDER BY invoice_date DESC", (vendor_id, user.get("tenant_id") or "TEN-RENTA-GO"))
     invoices = [dict(zip(("id","number","booking_id","date","toll","parking","extra_kms","extra_hours","other","total","status","notes"), r)) for r in cur.fetchall()]
-    cur.execute("SELECT booking_id,pickup_address,drop_address FROM bookings WHERE vendor_id=:1 OR UPPER(TRIM(vendor_name))=UPPER(TRIM(:2)) ORDER BY pickup_date DESC", (vendor_id, user.get("company_name") or user.get("company") or ""))
+    cur.execute("SELECT booking_id,pickup_address,drop_address FROM bookings WHERE tenant_id=:1 AND vendor_id=:2 ORDER BY pickup_date DESC", (user.get("tenant_id"), vendor_id))
     bookings = [{"id": r[0], "pickup": r[1], "drop": r[2]} for r in cur.fetchall()]
     conn.close()
     return templates.TemplateResponse("dashboards/vendor_billing.html", {"request": request, "user": user, "invoices": invoices, "bookings": bookings})
@@ -718,11 +747,11 @@ def vendor_reports(request: Request, start: str = "", end: str = "", period: str
     conn = get_connection(); cur = conn.cursor()
     vendor_id = _vendor_id_for_user(cur, user) if is_vendor else vendor_filter
     vendor_name = user.get("company_name") or user.get("company") or ""
-    params = []; ownership = ""
+    params = [user.get("tenant_id")]; ownership = " AND tenant_id=:1"
     if vendor_id:
         if is_vendor:
-            cur.execute("SELECT vendor_name FROM vendors WHERE vendor_id=:1", (vendor_id,)); row = cur.fetchone(); vendor_name = row[0] if row else vendor_name
-        params.extend([vendor_id, vendor_name]); ownership = " AND (vendor_id=:1 OR UPPER(TRIM(vendor_name))=UPPER(TRIM(:2)))"
+            cur.execute("SELECT vendor_name FROM vendors WHERE vendor_id=:1 AND tenant_id=:2", (vendor_id, user.get("tenant_id"))); row = cur.fetchone(); vendor_name = row[0] if row else vendor_name
+        params.extend([vendor_id]); ownership += " AND vendor_id=:2"
     if company_filter:
         params.append(company_filter); ownership += f" AND UPPER(TRIM(company_name))=UPPER(TRIM(:{len(params)}))"
     date_where = ""
@@ -746,8 +775,8 @@ def vendor_reports(request: Request, start: str = "", end: str = "", period: str
     if is_vendor:
         vendor_options, company_options = [], []
     else:
-        cur.execute("SELECT vendor_id,vendor_name FROM vendors WHERE vendor_name IS NOT NULL ORDER BY vendor_name"); vendor_options = [{"id": r[0], "name": r[1]} for r in cur.fetchall()]
-        cur.execute("SELECT DISTINCT company_name FROM bookings WHERE company_name IS NOT NULL ORDER BY company_name"); company_options = [r[0] for r in cur.fetchall()]
+        cur.execute("SELECT vendor_id,vendor_name FROM vendors WHERE tenant_id=:1 AND vendor_name IS NOT NULL ORDER BY vendor_name", (user.get("tenant_id"),)); vendor_options = [{"id": r[0], "name": r[1]} for r in cur.fetchall()]
+        cur.execute("SELECT DISTINCT company_name FROM bookings WHERE tenant_id=:1 AND company_name IS NOT NULL ORDER BY company_name", (user.get("tenant_id"),)); company_options = [r[0] for r in cur.fetchall()]
     return templates.TemplateResponse("dashboards/vendor_reports.html", {"request": request, "user": user, "bookings": bookings, "summary": summary, "start": start, "end": end, "period": period, "is_vendor": is_vendor, "vendor_options": vendor_options, "company_options": company_options, "vendor_filter": vendor_filter, "company_filter": company_filter})
 
 
@@ -799,7 +828,7 @@ def vendor_save_driver(request: Request, driver_id: str = Form(""), driver_name:
     if not vendor_id: conn.close(); return RedirectResponse("/dashboards/vendor/resources?msg=vendor-not-found", status_code=303)
     expiry = datetime.strptime(license_expiry, "%Y-%m-%d").date() if license_expiry.strip() else None
     if driver_id:
-        cur.execute("UPDATE drivers SET driver_name=:1,mobile=:2,license_no=:3,license_expiry=:4,languages_known=:5,compliance_status=:6 WHERE driver_id=:7 AND vendor_id=:8", (driver_name.strip(),mobile.strip(),license_no.strip(),expiry,languages_known.strip(),compliance_status,driver_id,vendor_id))
+        cur.execute("UPDATE drivers SET driver_name=:1,mobile=:2,license_no=:3,license_expiry=:4,languages_known=:5,compliance_status=:6 WHERE driver_id=:7 AND vendor_id=:8 AND tenant_id=:9", (driver_name.strip(),mobile.strip(),license_no.strip(),expiry,languages_known.strip(),compliance_status,driver_id,vendor_id,user.get("tenant_id")))
     else:
         cur.execute("INSERT INTO drivers (driver_id,tenant_id,vendor_id,driver_name,mobile,license_no,license_expiry,languages_known,compliance_status,status) VALUES (:1,:2,:3,:4,:5,:6,:7,:8,:9,'Active')", (next_driver_id(cur),user.get("tenant_id") or "TEN-RENTA-GO",vendor_id,driver_name.strip(),mobile.strip(),license_no.strip(),expiry,languages_known.strip(),compliance_status))
     audit(conn,user,"VENDOR_DRIVER_UPDATED",vendor_id,f"driver={driver_name}"); conn.commit(); conn.close()
@@ -816,7 +845,7 @@ def vendor_save_vehicle(request: Request, vehicle_id: str = Form(""), reg_number
     def d(v): return datetime.strptime(v, "%Y-%m-%d").date() if v.strip() else None
     values=(reg_number.strip(),make.strip(),model.strip(),category.strip(),d(insurance_exp),d(permit_exp),d(fitness_exp),d(puc_exp),compliance_status)
     if vehicle_id:
-        cur.execute("UPDATE vehicles SET reg_number=:1,make=:2,model=:3,category=:4,insurance_exp=:5,permit_exp=:6,fitness_exp=:7,puc_exp=:8,compliance_status=:9 WHERE vehicle_id=:10 AND vendor_id=:11", values+(vehicle_id,vendor_id))
+        cur.execute("UPDATE vehicles SET reg_number=:1,make=:2,model=:3,category=:4,insurance_exp=:5,permit_exp=:6,fitness_exp=:7,puc_exp=:8,compliance_status=:9 WHERE vehicle_id=:10 AND vendor_id=:11 AND tenant_id=:12", values+(vehicle_id,vendor_id,user.get("tenant_id")))
     else:
         cur.execute("INSERT INTO vehicles (vehicle_id,tenant_id,vendor_id,reg_number,make,model,category,insurance_exp,permit_exp,fitness_exp,puc_exp,compliance_status,status) VALUES (:1,:2,:3,:4,:5,:6,:7,:8,:9,:10,:11,:12,'Active')", (next_vehicle_id(cur),user.get("tenant_id") or "TEN-RENTA-GO",vendor_id)+values)
     audit(conn,user,"VENDOR_VEHICLE_UPDATED",vendor_id,f"vehicle={reg_number}"); conn.commit(); conn.close()

@@ -2,9 +2,13 @@
 
 import json
 import re
+import uuid
+import csv
+import io
 import urllib.parse
 import urllib.request
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta, time, timezone
+from zoneinfo import ZoneInfo
 from urllib.parse import quote
 
 from fastapi import APIRouter, Request, Form
@@ -17,7 +21,7 @@ from ..db import get_connection, multi_fetch
 from ..config import settings
 from ..scope import (
     visible_booking_ids, can_view, OPERATOR_ROLES,
-    CORPORATE_PORTAL_ROLES, VENDOR_PORTAL_ROLES,
+    CORPORATE_PORTAL_ROLES, VENDOR_PORTAL_ROLES, authorization_tenant, is_internal_user,
 )
 from ..gps import sync_status_text, gps_report, distance_meters, route_estimate, route_estimate_multi
 from ..audit import audit, _parse_oracle_dt
@@ -33,6 +37,8 @@ from ..ids import (
     next_company_id, next_employee_ids, next_individual_id,
     next_guest_company_id, next_vendor_id, next_driver_id, next_vehicle_id,
 )
+from ..trip_continuity import create_trip_continuity, link_booking, update_status, append_event
+from ..dashboard_metrics import booking_trip_kpis, can_view_booking_kpis
 
 router = APIRouter(prefix="/bookings")
 
@@ -88,12 +94,61 @@ def _can_modify_booking(user):
     )
 
 
+def _can_late_entry(user):
+    """Late/post-trip entry is an internal RentaGO operation only."""
+    return bool(user and is_internal_user(user) and module_level(user, "Bookings") == "F")
+
+
+def _is_post_trip_booking_row(booking):
+    """Identify historical/completed rows before allowing live-trip actions."""
+    if not booking:
+        return False
+    if _is_active_late_booking(booking):
+        return False
+    reason = str(booking.get("status_reason") or "").strip().lower()
+    status = str(booking.get("booking_status") or "").strip().lower()
+    return (str(booking.get("is_late_entry") or "N").strip().upper() == "Y"
+            or str(booking.get("entry_mode") or "").strip().upper() == "OFFLINE_SYSTEM_DOWNTIME"
+            or reason == "trip completed" or status.startswith("3-"))
+
+
+def _is_active_late_booking(booking):
+    """Return true only for the current-trip late-entry state."""
+    if not booking:
+        return False
+    entry_mode = str(booking.get("entry_mode") or "").strip().upper()
+    late_type = str(booking.get("late_entry_type") or "").strip().upper()
+    reason = str(booking.get("status_reason") or "").strip().lower()
+    return (entry_mode == "OFFLINE_SYSTEM_DOWNTIME_ACTIVE"
+            or late_type == "CURRENT_TRIP_ACTIVE"
+            or reason in {"late entry - active", "trip in progress"}
+            and entry_mode == "OFFLINE_SYSTEM_DOWNTIME_ACTIVE")
+
+
 def _can_change_driver(user):
     return _can_allocate(user)
 
 
 def _can_change_vendor(user):
     return _can_allocate(user) and not _is_vendor_portal(user)
+
+
+def _authorized_vendor_id(user, booking):
+    """Return the authenticated vendor's ID when the booking is in scope."""
+    role = (user.get("role") or "").strip().lower()
+    if role not in VENDOR_PORTAL_ROLES:
+        return None
+    tenant_id = authorization_tenant(user)
+    organization_id = (user.get("organization_id") or "").strip()
+    if not tenant_id or not organization_id.lower().startswith("vend-"):
+        return False
+    if str(booking.get("tenant_id") or "") != str(tenant_id):
+        return False
+    vendor_id = str(booking.get("vendor_id") or "").strip()
+    authorized_id = organization_id[5:]
+    if not vendor_id or vendor_id.lower() != authorized_id.lower():
+        return False
+    return authorized_id
 
 
 def _is_rentago_override(user):
@@ -128,6 +183,13 @@ def _can_guest_trip_action(user):
 def _participant_mobile_only(request, user):
     return ((user.get("role") or "").strip().lower() in {"guest", "driver"}
             and not is_mobile_request(request))
+
+
+def _trip_action_redirect(user, booking_id, message):
+    role = (user.get("role") or "").strip().lower()
+    if role in {"guest", "driver"}:
+        return RedirectResponse(url=f"/mobile/{role}?msg={message}", status_code=303)
+    return RedirectResponse(url=f"/bookings/{booking_id}?msg={message}", status_code=303)
 
 
 def _can_driver_trip_action(user, booking):
@@ -234,8 +296,8 @@ def _next_trip_id(conn) -> str:
     return f"TR-{max_num + 1}"
 
 
-def _search_guests(conn, query: str, limit: int = 20) -> list:
-    """Search a merged Employees + Individuals guest list by name/company/phone.
+def _search_guests(conn, query: str, user, booking_type: str = "", limit: int = 20) -> list:
+    """Search the guest source permitted by the selected booking type.
 
     Returns everything the booking form needs to auto-fill on selection:
     guest identity + contact, company name/id, the company's legal name (used
@@ -244,25 +306,65 @@ def _search_guests(conn, query: str, limit: int = 20) -> list:
     q = f"%{(query or '').strip()}%"
     if not query.strip():
         q = "%"
+    role = (user.get("role") or "").strip().lower()
+    tenant_id = authorization_tenant(user)
+    org_id = (user.get("organization_id") or "").strip()
+    if not is_internal_user(user) and role not in CORPORATE_PORTAL_ROLES:
+        return []
+    if role in CORPORATE_PORTAL_ROLES and (not tenant_id or not org_id.lower().startswith("corp-")):
+        return []
     cur = conn.cursor()
-    cur.execute(
-        """SELECT guest_name, guest_mobile, company_name, company_id, emp_code,
-                  guest_email, admin_name, admin_mobile, admin_email,
-                  'Employee' AS source
-           FROM employees
-           WHERE (status IS NULL OR UPPER(status)='ACTIVE')
-             AND (LOWER(guest_name) LIKE LOWER(:1) OR LOWER(company_name) LIKE LOWER(:2)
-                  OR guest_mobile LIKE :3)
-           UNION ALL
-           SELECT guest_name, guest_contact, company_name, company_id, NULL,
-                  guest_email, admin_name, admin_contact, admin_email,
-                  'Individual' AS source
-           FROM individuals
-           WHERE (status IS NULL OR UPPER(status)='ACTIVE')
-             AND (LOWER(guest_name) LIKE LOWER(:4) OR LOWER(company_name) LIKE LOWER(:5)
-                  OR guest_contact LIKE :6)""",
-        (q, q, q, q, q, q),
-    )
+    kind = (booking_type or "").strip().lower()
+    include_employees = kind not in {"individual", "individual event"}
+    include_individuals = kind not in {"corporate"}
+    parts, params = [], []
+
+    if include_employees:
+        start = len(params) + 1
+        params.extend([q, q, q])
+        scope = ""
+        if role in CORPORATE_PORTAL_ROLES:
+            params.append(org_id[5:])
+            scope = f" AND company_id=:{start + 3}"
+            if tenant_id:
+                params.append(tenant_id)
+                scope += f" AND tenant_id=:{start + 4}"
+        elif tenant_id:
+            params.append(tenant_id)
+            scope = f" AND tenant_id=:{start + 3}"
+        parts.append(
+            f"SELECT guest_name, guest_mobile, company_name, company_id, emp_id, emp_code, "
+            f"guest_email, admin_name, admin_mobile, admin_email, 'Employee' AS source "
+            f"FROM employees WHERE (status IS NULL OR UPPER(status)='ACTIVE') "
+            f"AND (LOWER(guest_name) LIKE LOWER(:{start}) OR LOWER(company_name) LIKE LOWER(:{start + 1}) "
+            f"OR guest_mobile LIKE :{start + 2}){scope}"
+        )
+
+    if include_individuals:
+        start = len(params) + 1
+        params.extend([q, q, q])
+        scope = ""
+        if role in CORPORATE_PORTAL_ROLES:
+            params.append(org_id[5:])
+            scope = f" AND company_id=:{start + 3}"
+            if tenant_id:
+                params.append(tenant_id)
+                scope += f" AND tenant_id=:{start + 4}"
+        elif tenant_id:
+            params.append(tenant_id)
+            scope = f" AND tenant_id=:{start + 3}"
+        parts.append(
+            f"SELECT guest_name, guest_contact, company_name, company_id, individual_id, NULL, "
+            f"guest_email, admin_name, admin_contact, admin_email, 'Individual' AS source "
+            f"FROM individuals WHERE (status IS NULL OR UPPER(status)='ACTIVE') "
+            f"AND (LOWER(guest_name) LIKE LOWER(:{start}) OR LOWER(company_name) LIKE LOWER(:{start + 1}) "
+            f"OR guest_contact LIKE :{start + 2}){scope}"
+        )
+
+    if not parts:
+        return []
+    sql = " UNION ALL ".join(parts)
+    cur.execute(sql, params)
     rows = cur.fetchall()
     # resolve entity names (companies.legal_name) for the matched companies in
     # one extra query so the form can auto-fill Entity Name
@@ -270,10 +372,15 @@ def _search_guests(conn, query: str, limit: int = 20) -> list:
     entity = {}
     if cids:
         in_list = ", ".join(f":{i + 1}" for i in range(len(cids)))
+        entity_params = list(cids)
+        entity_scope = ""
+        if tenant_id:
+            entity_params.append(tenant_id)
+            entity_scope = f" AND tenant_id=:{len(entity_params)}"
         cur.execute(
             f"SELECT company_id, legal_name FROM companies "
-            f"WHERE company_id IN ({in_list})",
-            cids,
+            f"WHERE company_id IN ({in_list}){entity_scope}",
+            entity_params,
         )
         entity = {str(c).strip(): (l or "") for c, l in cur.fetchall()}
     out = []
@@ -283,9 +390,9 @@ def _search_guests(conn, query: str, limit: int = 20) -> list:
         cid = str(r[3] or "").strip()
         out.append({
             "guest_name": r[0], "mobile": r[1], "company": r[2],
-            "company_id": cid or "", "code": r[4], "email": r[5],
-            "admin_name": r[6] or "", "admin_mobile": r[7] or "",
-            "admin_email": r[8] or "", "source": r[9],
+            "company_id": cid or "", "identity_id": r[4], "code": r[5], "email": r[6],
+            "admin_name": r[7] or "", "admin_mobile": r[8] or "",
+            "admin_email": r[9] or "", "source": r[10],
             "entity": entity.get(cid, ""),
         })
         if len(out) >= limit:
@@ -294,16 +401,178 @@ def _search_guests(conn, query: str, limit: int = 20) -> list:
 
 
 @router.get("/guests")
-def search_guests(request: Request, q: str = ""):
+def search_guests(request: Request, q: str = "", booking_type: str = ""):
     user = current_user(request)
     if not user:
         return JSONResponse([], status_code=401)
+    if module_level(user, "Bookings") is None:
+        return JSONResponse([], status_code=403)
     conn = get_connection()
     try:
-        results = _search_guests(conn, q)
+        results = _search_guests(conn, q, user, booking_type)
     finally:
         conn.close()
     return JSONResponse(results)
+
+
+@router.get("/late-entry")
+def late_entry_page(request: Request, msg: str = ""):
+    user = current_user(request)
+    if not _can_late_entry(user):
+        return RedirectResponse(url="/home?msg=access-denied", status_code=303)
+    return templates.TemplateResponse("bookings/late_entry.html", {
+        "request": request, "user": user, "message": msg,
+    })
+
+
+@router.post("/late-entry")
+def late_entry(
+    request: Request,
+    guest_name: str = Form(""), guest_contact: str = Form(""), guest_email: str = Form(""),
+    pickup_address: str = Form(""), drop_address: str = Form(""),
+    pickup_date: str = Form(""), pickup_time: str = Form(""),
+    drop_date: str = Form(""), drop_time: str = Form(""),
+    vendor_name: str = Form(""), driver_name: str = Form(""), vehicle_no: str = Form(""),
+    reason: str = Form(""), late_entry_type: str = Form("HISTORICAL_POST_TRIP"),
+    late_entry_remarks: str = Form(""), pickup_start_km: str = Form(""),
+):
+    user = current_user(request)
+    if not _can_late_entry(user):
+        return RedirectResponse(url="/home?msg=access-denied", status_code=303)
+    active_late = (late_entry_type or "").strip().upper() == "CURRENT_TRIP_ACTIVE"
+    pickup = _to_date(pickup_date)
+    drop = _to_date(drop_date)
+    required = (guest_name, pickup_address, pickup_time, vendor_name, driver_name,
+                vehicle_no, reason)
+    if not pickup or (not active_late and not drop) or not all(str(value).strip() for value in required):
+        return RedirectResponse(url="/bookings/late-entry?msg=required", status_code=303)
+    if len(reason.strip()) > 60:
+        return RedirectResponse(url="/bookings/late-entry?msg=reason-too-long", status_code=303)
+    conn = get_connection()
+    cur = conn.cursor()
+    booking_id = _next_booking_id(conn, "Late Entry")
+    entered_at = datetime.now()
+    trip_id = _next_trip_id(conn) if not active_late else None
+    actual_start = _to_dt(f"{pickup_date}T{pickup_time}")
+    actual_end = _to_dt(f"{drop_date}T{drop_time}") if drop and drop_time.strip() else None
+    if not actual_start or (not active_late and not actual_end) or (actual_end and actual_end < actual_start):
+        conn.close()
+        return RedirectResponse(url="/bookings/late-entry?msg=invalid-times", status_code=303)
+    if active_late:
+        try:
+            if float(pickup_start_km) < 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            conn.close()
+            return RedirectResponse(url="/bookings/late-entry?msg=pickup-odometer-required", status_code=303)
+    tenant_id = authorization_tenant(user) or user.get("tenant_id") or "TEN-RENTA-GO"
+    if not tenant_id:
+        conn.close()
+        return RedirectResponse(url="/bookings/late-entry?msg=tenant-required", status_code=303)
+    cur.execute(
+        "SELECT vendor_id, vendor_name FROM vendors "
+        "WHERE tenant_id=:1 AND UPPER(TRIM(vendor_name))=UPPER(TRIM(:2)) "
+        "AND (status IS NULL OR UPPER(status)='ACTIVE') FETCH FIRST 1 ROWS ONLY",
+        (tenant_id, vendor_name.strip()),
+    )
+    vendor_row = cur.fetchone()
+    if not vendor_row:
+        conn.close()
+        return RedirectResponse(url="/bookings/late-entry?msg=invalid-master-record", status_code=303)
+    cur.execute(
+        "SELECT driver_name, license_expiry, police_verification, background_check, compliance_status "
+        "FROM drivers WHERE tenant_id=:1 AND vendor_id=:2 "
+        "AND UPPER(TRIM(driver_name))=UPPER(TRIM(:3)) "
+        "AND (status IS NULL OR UPPER(status)='ACTIVE') FETCH FIRST 1 ROWS ONLY",
+        (tenant_id, vendor_row[0], driver_name.strip()),
+    )
+    driver_row = cur.fetchone()
+    cur.execute(
+        "SELECT reg_number, status, compliance_status, insurance_exp, permit_exp, fitness_exp, puc_exp "
+        "FROM vehicles WHERE tenant_id=:1 AND vendor_id=:2 "
+        "AND UPPER(TRIM(reg_number))=UPPER(TRIM(:3)) "
+        "AND (status IS NULL OR UPPER(status)='ACTIVE') FETCH FIRST 1 ROWS ONLY",
+        (tenant_id, vendor_row[0], vehicle_no.strip()),
+    )
+    vehicle_row = cur.fetchone()
+    trip_date = actual_start.date()
+    driver_bad = (not driver_row or
+                  (driver_row[1] and hasattr(driver_row[1], "date") and driver_row[1].date() < trip_date) or
+                  any(str(value or "").strip().lower() in {"no", "failed", "expired", "invalid"}
+                      for value in (driver_row[2], driver_row[3], driver_row[4])))
+    vehicle_bad = (not vehicle_row or
+                   str(vehicle_row[1] or "").strip().lower() in {"inactive", "scrapped", "suspended"} or
+                   str(vehicle_row[2] or "").strip().lower() in {"no", "failed", "expired", "invalid"} or
+                    any(value and hasattr(value, "date") and value.date() < trip_date for value in vehicle_row[3:]))
+    if driver_bad or vehicle_bad:
+        conn.close()
+        return RedirectResponse(url="/bookings/late-entry?msg=compliance-failed", status_code=303)
+    vendor_name = vendor_row[1]
+    driver_name = driver_row[0]
+    vehicle_no = vehicle_row[0]
+    values = (
+        booking_id, tenant_id, entered_at, "Late Entry",
+        guest_name.strip(), guest_email.strip() or None, guest_contact.strip() or None,
+        pickup_address.strip(), pickup, pickup_time.strip() or None,
+        drop_address.strip(), drop, drop_time.strip() or None,
+        vendor_name.strip(), driver_name.strip(), vehicle_no.strip(),
+        "Y", reason.strip(), user.get("user_id"),
+        "OFFLINE_SYSTEM_DOWNTIME_ACTIVE" if active_late else "OFFLINE_SYSTEM_DOWNTIME",
+        (late_entry_type or "HISTORICAL_POST_TRIP").strip(),
+        (late_entry_remarks or "").strip()[:1000], "Y" if active_late else "N",
+        user.get("user_id") if active_late else None,
+    )
+    booking_status = "2-Confirmed" if active_late else "3-Completed"
+    status_reason = "Late Entry - Active" if active_late else "Trip Completed"
+    activation_at = "SYSTIMESTAMP" if active_late else "NULL"
+    insert_sql = f"""INSERT INTO bookings (
+            booking_id, tenant_id, booking_date, booking_type, guest_name_1,
+            guest_email, guest_contact, pickup_address, pickup_date, pickup_time,
+            drop_address, drop_date, drop_time, vendor_name, driver_name, vehicle_no,
+            is_late_entry, late_entry_reason, late_entry_entered_by,
+             late_entry_entered_at, booking_punched_at, entry_mode, late_entry_type,
+             late_entry_remarks, is_late_entry_activated, late_entry_activated_by,
+             late_entry_activated_at, post_trip_reason, actual_start_at, actual_end_at,
+             done_by_booking, step1_time,
+             booking_status, status_reason, feedback_trigger
+          ) VALUES (:1,:2,:3,:4,:5,:6,:7,:8,:9,:10,:11,:12,:13,:14,:15,:16,
+                     :17,:18,:19,SYSTIMESTAMP,SYSTIMESTAMP,:20,:21,:22,:23,
+                      :24,{activation_at},:25,:26,:27,:28,SYSTIMESTAMP,'{booking_status}','{status_reason}','FEEDBACK PENDING')"""
+    cur.execute(insert_sql, values + (reason.strip(), actual_start, actual_end, user.get("user_id"),))
+    if not active_late:
+        cur.execute(
+        """INSERT INTO trips (
+            trip_id, tenant_id, booking_id, guest_name, pickup_date, pickup_address,
+            drop_address, driver_name, vehicle_no, booking_status, trip_status,
+            driver_mobile, pickup_start_time, actual_start_dt, drop_end_time,
+            actual_end_dt, customer_signature_source, driver_signature_source
+        ) VALUES (:1,:2,:3,:4,:5,:6,:7,:8,:9,'Trip Completed','Trip Completed',
+                   NULL,:10,:11,:12,:13,NULL,NULL)""",
+         (trip_id, tenant_id, booking_id,
+         guest_name.strip(), pickup, pickup_address.strip(), drop_address.strip(),
+         driver_name.strip(), vehicle_no.strip(), pickup_time.strip() or None,
+         actual_start,
+         drop_time.strip() or None,
+         actual_end),
+        )
+    continuity_id = None
+    if active_late:
+        continuity_id, continuity_ref = create_trip_continuity(
+            conn, tenant_id, "CURRENT_TRIP_ACTIVE", status="READY",
+            booking_id=booking_id, driver_id=driver_name.strip(),
+            vehicle_id=vehicle_no.strip(), guest_id=guest_name.strip(),
+            source="SMART_BOOKING", actual_pickup=actual_start,
+        )
+        cur.execute("UPDATE bookings SET trip_continuity_id=:1 WHERE booking_id=:2",
+                    (continuity_id, booking_id))
+        audit(conn, user, "Active Late Entry Created", booking_id,
+              f"trip_continuity_id={continuity_id}; reference={continuity_ref}")
+    audit(conn, user, "Late/Post-Trip Booking Entry", booking_id,
+          f"trip={trip_id or '-'}; type={late_entry_type}; reason={reason.strip()[:60]}")
+    conn.commit()
+    conn.close()
+    result_msg = "active-late-entry-created" if active_late else "late-entry-created"
+    return RedirectResponse(url=f"/bookings/{booking_id}?msg={result_msg}", status_code=303)
 
 
 @router.get("/companies")
@@ -315,15 +584,30 @@ def search_companies(request: Request, q: str = ""):
     user = current_user(request)
     if not user:
         return JSONResponse([], status_code=401)
+    if module_level(user, "Bookings") is None:
+        return JSONResponse([], status_code=403)
     query = f"%{(q or '').strip()}%"
+    role = (user.get("role") or "").strip().lower()
+    tenant_id = authorization_tenant(user)
+    org_id = (user.get("organization_id") or "").strip()
+    if role in CORPORATE_PORTAL_ROLES:
+        if not tenant_id or not org_id.lower().startswith("corp-"):
+            return JSONResponse([], status_code=403)
+        scope = " AND company_id=:2 AND tenant_id=:3"
+        params = (query, org_id[5:], tenant_id)
+    elif not is_internal_user(user):
+        return JSONResponse([], status_code=403)
+    else:
+        scope = " AND tenant_id=:2" if tenant_id else ""
+        params = (query, tenant_id) if tenant_id else (query,)
     conn = get_connection()
     cur = conn.cursor()
     cur.execute(
         "SELECT company_id, company_name, legal_name, city, state "
         "FROM companies WHERE LOWER(company_name) LIKE LOWER(:1) "
-        "AND (status IS NULL OR UPPER(status)='ACTIVE') "
+        "AND (status IS NULL OR UPPER(status)='ACTIVE')" + scope + " "
         "ORDER BY company_name",
-        (query,),
+        params,
     )
     rows = cur.fetchall()[:20]
     conn.close()
@@ -339,11 +623,30 @@ def company_entities(request: Request, company_id: str = ""):
     user = current_user(request)
     if not user or not company_id.strip():
         return JSONResponse([], status_code=401 if not user else 200)
+    if module_level(user, "Bookings") is None:
+        return JSONResponse([], status_code=403)
+    role = (user.get("role") or "").strip().lower()
+    if role in CORPORATE_PORTAL_ROLES:
+        org_id = (user.get("organization_id") or "").strip()
+        if not authorization_tenant(user) or not org_id.lower().startswith("corp-") or company_id.strip().lower() != org_id[5:].lower():
+            return JSONResponse([], status_code=403)
+    elif not is_internal_user(user):
+        return JSONResponse([], status_code=403)
     conn = get_connection(); cur = conn.cursor()
-    cur.execute("SELECT entity_id,entity_code,legal_name,gstin,city,state,address FROM company_entities WHERE company_id=:1 AND (status IS NULL OR UPPER(status)='ACTIVE') ORDER BY legal_name", (company_id.strip(),))
+    entity_params = [company_id.strip()]
+    entity_scope = ""
+    if authorization_tenant(user):
+        entity_params.append(authorization_tenant(user))
+        entity_scope = " AND tenant_id=:2"
+    cur.execute("SELECT entity_id,entity_code,legal_name,gstin,city,state,address FROM company_entities WHERE company_id=:1" + entity_scope + " AND (status IS NULL OR UPPER(status)='ACTIVE') ORDER BY legal_name", entity_params)
     rows = [{"entity_id": r[0], "entity_code": r[1] or "", "legal_name": r[2], "gstin": r[3] or "", "city": r[4] or "", "state": r[5] or "", "address": r[6] or ""} for r in cur.fetchall()]
     if not rows:
-        cur.execute("SELECT company_id,legal_name,city,state FROM companies WHERE company_id=:1", (company_id.strip(),))
+        legacy_params = [company_id.strip()]
+        legacy_scope = ""
+        if authorization_tenant(user):
+            legacy_params.append(authorization_tenant(user))
+            legacy_scope = " AND tenant_id=:2"
+        cur.execute("SELECT company_id,legal_name,city,state FROM companies WHERE company_id=:1" + legacy_scope, legacy_params)
         legacy = cur.fetchone()
         if legacy and legacy[1]:
             rows = [{"entity_id": "LEGACY-" + str(legacy[0]), "entity_code": "LEGACY", "legal_name": legacy[1], "gstin": "", "city": legacy[2] or "", "state": legacy[3] or "", "address": ""}]
@@ -377,15 +680,35 @@ def search_vendors(request: Request, q: str = ""):
     user = current_user(request)
     if not user:
         return JSONResponse([], status_code=401)
+    if module_level(user, "Bookings") is None:
+        return JSONResponse([], status_code=403)
+    role = (user.get("role") or "").strip().lower()
+    if role in CORPORATE_PORTAL_ROLES:
+        return JSONResponse([], status_code=403)
+    if not is_internal_user(user) and role not in VENDOR_PORTAL_ROLES:
+        return JSONResponse([], status_code=403)
     query = f"%{(q or '').strip()}%"
     conn = get_connection()
     cur = conn.cursor()
+    params = [query, query]
+    scope = ""
+    if role in VENDOR_PORTAL_ROLES:
+        org_id = (user.get("organization_id") or "").strip()
+        tenant_id = authorization_tenant(user)
+        if not tenant_id or not org_id.lower().startswith("vend-"):
+            conn.close()
+            return JSONResponse([], status_code=403)
+        params.extend([org_id[5:], tenant_id])
+        scope = " AND vendor_id=:3 AND tenant_id=:4"
+    elif authorization_tenant(user):
+        params.append(authorization_tenant(user))
+        scope = " AND tenant_id=:3"
     cur.execute(
         "SELECT vendor_name, mobile, email FROM vendors "
         "WHERE (LOWER(vendor_name) LIKE LOWER(:1) OR LOWER(email) LIKE LOWER(:2)) "
-        "AND (status IS NULL OR UPPER(status) NOT IN ('INACTIVE','BLACKLISTED')) "
+        "AND (status IS NULL OR UPPER(status) NOT IN ('INACTIVE','BLACKLISTED'))" + scope + " "
         "ORDER BY vendor_name",
-        (query, query),
+        params,
     )
     rows = cur.fetchall()[:20]
     conn.close()
@@ -400,15 +723,35 @@ def search_drivers(request: Request, q: str = ""):
     user = current_user(request)
     if not user:
         return JSONResponse([], status_code=401)
+    if module_level(user, "Bookings") is None:
+        return JSONResponse([], status_code=403)
+    role = (user.get("role") or "").strip().lower()
+    if role in CORPORATE_PORTAL_ROLES:
+        return JSONResponse([], status_code=403)
+    if not is_internal_user(user) and role not in VENDOR_PORTAL_ROLES:
+        return JSONResponse([], status_code=403)
     query = f"%{(q or '').strip()}%"
     conn = get_connection()
     cur = conn.cursor()
+    params = [query, query]
+    scope = ""
+    if role in VENDOR_PORTAL_ROLES:
+        org_id = (user.get("organization_id") or "").strip()
+        tenant_id = authorization_tenant(user)
+        if not tenant_id or not org_id.lower().startswith("vend-"):
+            conn.close()
+            return JSONResponse([], status_code=403)
+        params.extend([org_id[5:], tenant_id])
+        scope = " AND vendor_id=:3 AND tenant_id=:4"
+    elif authorization_tenant(user):
+        params.append(authorization_tenant(user))
+        scope = " AND tenant_id=:3"
     cur.execute(
         "SELECT driver_name, mobile FROM drivers "
         "WHERE (LOWER(driver_name) LIKE LOWER(:1) OR mobile LIKE :2) "
-        "AND (status IS NULL OR UPPER(status) NOT IN ('INACTIVE','TERMINATED')) "
+        "AND (status IS NULL OR UPPER(status) NOT IN ('INACTIVE','TERMINATED'))" + scope + " "
         "ORDER BY driver_name",
-        (query, query),
+        params,
     )
     rows = cur.fetchall()[:20]
     conn.close()
@@ -423,21 +766,210 @@ def search_vehicles(request: Request, q: str = ""):
     user = current_user(request)
     if not user:
         return JSONResponse([], status_code=401)
+    if module_level(user, "Bookings") is None:
+        return JSONResponse([], status_code=403)
+    role = (user.get("role") or "").strip().lower()
+    if role in CORPORATE_PORTAL_ROLES:
+        return JSONResponse([], status_code=403)
+    if not is_internal_user(user) and role not in VENDOR_PORTAL_ROLES:
+        return JSONResponse([], status_code=403)
     query = f"%{(q or '').strip()}%"
     conn = get_connection()
     cur = conn.cursor()
+    params = [query, query]
+    scope = ""
+    if role in VENDOR_PORTAL_ROLES:
+        org_id = (user.get("organization_id") or "").strip()
+        tenant_id = authorization_tenant(user)
+        if not tenant_id or not org_id.lower().startswith("vend-"):
+            conn.close()
+            return JSONResponse([], status_code=403)
+        params.extend([org_id[5:], tenant_id])
+        scope = " AND vendor_id=:3 AND tenant_id=:4"
+    elif authorization_tenant(user):
+        params.append(authorization_tenant(user))
+        scope = " AND tenant_id=:3"
     cur.execute(
         "SELECT reg_number, category FROM vehicles "
         "WHERE (UPPER(reg_number) LIKE UPPER(:1) OR LOWER(category) LIKE LOWER(:2)) "
-        "AND (status IS NULL OR UPPER(status) NOT IN ('INACTIVE','SCRAPPED')) "
+        "AND (status IS NULL OR UPPER(status) NOT IN ('INACTIVE','SCRAPPED'))" + scope + " "
         "ORDER BY reg_number",
-        (query, query),
+        params,
     )
     rows = cur.fetchall()[:20]
     conn.close()
     return JSONResponse([
         {"reg": r[0], "category": r[1]} for r in rows if r[0]
     ])
+
+
+@router.get("/smart")
+def smart_booking_page(request: Request):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse(url="/auth/login", status_code=303)
+    if (module_level(user, "Bookings") is None
+            or (not is_internal_user(user) and not authorization_tenant(user))):
+        return RedirectResponse(url="/home?msg=access-denied", status_code=303)
+    return templates.TemplateResponse("bookings/smart.html", {
+        "request": request,
+        "user": user,
+        "late_entry_allowed": _can_late_entry(user),
+    })
+
+
+@router.get("/smart/duplicates")
+def smart_booking_duplicates(request: Request, guest: str = "", pickup: str = "",
+                             drop: str = "", service_date: str = ""):
+    user = current_user(request)
+    tenant_id = authorization_tenant(user) if user else None
+    if (not user or (not is_internal_user(user) and not tenant_id)
+            or module_level(user, "Bookings") is None or not _can_modify_booking(user)):
+        return JSONResponse([], status_code=401 if not user else 403)
+    terms = [guest.strip(), pickup.strip(), drop.strip(), service_date.strip()]
+    if not any(terms):
+        return JSONResponse([])
+    conn = get_connection()
+    cur = conn.cursor()
+    params = []
+    conditions = []
+    if tenant_id:
+        params.append(tenant_id)
+        conditions.append("tenant_id=:1")
+    for column, value in (("guest_name_1", guest), ("pickup_address", pickup),
+                          ("drop_address", drop)):
+        if value.strip():
+            params.append("%" + value.strip() + "%")
+            conditions.append(f"LOWER(NVL({column},' ')) LIKE LOWER(:{len(params)})")
+    if service_date.strip():
+        date_value = _to_date(service_date)
+        if date_value:
+            params.append(date_value)
+            conditions.append(f"TRUNC(pickup_date)=TRUNC(:{len(params)})")
+    cur.execute(
+        "SELECT booking_id, guest_name_1, pickup_address, drop_address, pickup_date, "
+        "pickup_time, booking_status FROM bookings WHERE " + " AND ".join(conditions) +
+        " ORDER BY booking_date DESC FETCH FIRST 5 ROWS ONLY", params,
+    )
+    rows = cur.fetchall()
+    planned_raw = b.get("planned_route_json") or "{}"
+    if hasattr(planned_raw, "read"):
+        planned_raw = planned_raw.read()
+    b["planned_route_json"] = planned_raw
+    conn.close()
+    return JSONResponse([{
+        "booking_id": r[0], "guest": r[1] or "", "pickup": r[2] or "",
+        "drop": r[3] or "", "date": str(r[4] or ""), "time": r[5] or "",
+        "status": r[6] or "",
+    } for r in rows])
+
+
+@router.get("/smart/repeat/{booking_id}")
+def smart_repeat_booking(request: Request, booking_id: str):
+    user = current_user(request)
+    tenant_id = authorization_tenant(user) if user else None
+    if (not user or (not is_internal_user(user) and not tenant_id)
+            or module_level(user, "Bookings") is None or not _can_modify_booking(user)):
+        return JSONResponse({"error": "not authorized"}, status_code=401 if not user else 403)
+    conn = get_connection()
+    cur = conn.cursor()
+    repeat_params = [booking_id.strip()]
+    repeat_scope = ""
+    if tenant_id:
+        repeat_params.append(tenant_id)
+        repeat_scope = " AND tenant_id=:2"
+    cur.execute(
+        "SELECT booking_id, booking_type, company_name, company_id, entity_name, "
+        "guest_name_1, guest_email, guest_contact, pickup_address, pickup_city, "
+        "pickup_state, pickup_country, drop_address, drop_city, drop_state, drop_country, "
+        "vehicle_type, package_type FROM bookings WHERE booking_id=:1" + repeat_scope,
+        repeat_params,
+    )
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return JSONResponse({"error": "booking not found"}, status_code=404)
+    keys = ("booking_id", "booking_type", "company_name", "company_id", "entity_name",
+            "guest_name", "guest_email", "guest_contact", "pickup_address", "pickup_city",
+            "pickup_state", "pickup_country", "drop_address", "drop_city", "drop_state",
+            "drop_country", "vehicle_type", "package_type")
+    return JSONResponse(dict(zip(keys, row)))
+
+
+@router.get("/smart/rate")
+def smart_rate_preview(request: Request, company_id: str = "", vehicle_type: str = ""):
+    user = current_user(request)
+    if (not user or (not is_internal_user(user) and not authorization_tenant(user))
+            or module_level(user, "Bookings") is None or not _can_modify_booking(user)):
+        return JSONResponse({"error": "not authorized"}, status_code=401 if not user else 403)
+    if not vehicle_type.strip():
+        return JSONResponse({"base_rate": 0, "source": "Select vehicle category"})
+    return JSONResponse({
+        "base_rate": customer_rate(company_id, vehicle_type),
+        "source": "Existing RentaGO rate-card lookup",
+    })
+
+
+@router.post("/trip-continuity")
+def create_trip_continuity_route(
+    request: Request,
+    trip_mode: str = Form("OFFLINE_EMERGENCY"),
+    driver_id: str = Form(""), vehicle_id: str = Form(""), guest_id: str = Form(""),
+    actual_pickup_datetime: str = Form(""), device_id: str = Form(""),
+):
+    """Create an internal Trip Continuity identity without inventing a Booking ID."""
+    user = current_user(request)
+    if not _can_late_entry(user):
+        return JSONResponse({"error": "not authorized"}, status_code=403)
+    if trip_mode not in {"NORMAL", "CURRENT_TRIP_ACTIVE", "OFFLINE_EMERGENCY"}:
+        return JSONResponse({"error": "invalid trip mode"}, status_code=400)
+    tenant_id = authorization_tenant(user) or user.get("tenant_id") or "TEN-RENTA-GO"
+    actual_pickup = _to_dt(actual_pickup_datetime) if actual_pickup_datetime else None
+    conn = get_connection()
+    continuity_id, reference = create_trip_continuity(
+        conn, tenant_id, trip_mode, status="AWAITING_BOOKING",
+        driver_id=driver_id.strip() or None, vehicle_id=vehicle_id.strip() or None,
+        guest_id=guest_id.strip() or None, source="INTERNAL_CONSOLE",
+        offline_created="Y" if trip_mode == "OFFLINE_EMERGENCY" else "N",
+        actual_pickup=actual_pickup,
+    )
+    audit(conn, user, "Trip Continuity Created", continuity_id,
+          f"reference={reference}; mode={trip_mode}")
+    conn.commit()
+    conn.close()
+    return JSONResponse({"trip_continuity_id": continuity_id, "trip_reference": reference,
+                         "trip_mode": trip_mode, "status": "AWAITING_BOOKING"})
+
+
+@router.post("/{booking_id}/trip-continuity/link")
+def link_trip_continuity_route(request: Request, booking_id: str,
+                               trip_continuity_id: str = Form("")):
+    user = current_user(request)
+    if not _can_late_entry(user) or not trip_continuity_id.strip():
+        return JSONResponse({"error": "not authorized"}, status_code=403)
+    conn = get_connection()
+    cur = conn.cursor()
+    booking = _get_booking(cur, booking_id)
+    if not booking:
+        conn.close()
+        return JSONResponse({"error": "booking not found"}, status_code=404)
+    tenant_id = authorization_tenant(user) or user.get("tenant_id") or "TEN-RENTA-GO"
+    cur.execute("SELECT tenant_id FROM trip_continuity WHERE trip_continuity_id=:1",
+                (trip_continuity_id.strip(),))
+    row = cur.fetchone()
+    if not row or str(row[0]) != str(tenant_id):
+        conn.close()
+        return JSONResponse({"error": "continuity not found"}, status_code=404)
+    linked = link_booking(conn, trip_continuity_id.strip(), booking_id, user.get("user_id"))
+    if not linked:
+        conn.close()
+        return JSONResponse({"error": "already linked or invalid state"}, status_code=409)
+    audit(conn, user, "Trip Continuity Linked", booking_id,
+          f"trip_continuity_id={trip_continuity_id.strip()}")
+    conn.commit()
+    conn.close()
+    return JSONResponse({"ok": True, "booking_id": booking_id,
+                         "trip_continuity_id": trip_continuity_id.strip()})
 
 
 @router.get("")
@@ -447,7 +979,7 @@ def list_bookings(
     f_pickup_address: str = "", f_drop_address: str = "",
     f_pickup_city: str = "", f_drop_city: str = "",
     f_pickup_date: str = "", f_pickup_time: str = "",
-    f_vehicle_type: str = "", page: int = 1,
+     f_vehicle_type: str = "", kpi: str = "", page: int = 1,
 ):
     """Booking list with per-field search filters (AND-ed together):
 
@@ -457,6 +989,14 @@ def list_bookings(
     user = current_user(request)
     if not user:
         return RedirectResponse(url="/auth/login", status_code=303)
+    role = (user.get("role") or "").strip().lower()
+    tenant_id = authorization_tenant(user)
+    if role in CORPORATE_PORTAL_ROLES:
+        org_id = (user.get("organization_id") or "").strip()
+        if not tenant_id or not org_id.lower().startswith("corp-"):
+            return RedirectResponse(url="/home?msg=access-denied", status_code=303)
+    elif not is_internal_user(user) and not tenant_id:
+        return RedirectResponse(url="/home?msg=access-denied", status_code=303)
     if (user.get("role") or "").strip().lower() in {"vendor", "vendor admin", "vendor operations", "vendor viewer"}:
         return RedirectResponse(url="/dashboards/vendor", status_code=303)
     if module_level(user, "Bookings") is None:
@@ -473,7 +1013,7 @@ def list_bookings(
         "NVL((SELECT NVL((SELECT e.emp_id FROM employees e WHERE UPPER(TRIM(e.company_name))=UPPER('RentaGO Technologies Pvt Ltd') AND UPPER(TRIM(e.guest_name))=UPPER(TRIM(u.name)) AND ROWNUM=1),NVL(u.emp_id,u.user_id))||' Name: '||NVL(u.name,u.user_id) FROM users u WHERE UPPER(u.user_id)=UPPER(b.done_by_booking)), b.done_by_booking), "
         "NVL((SELECT NVL((SELECT e.emp_id FROM employees e WHERE UPPER(TRIM(e.company_name))=UPPER('RentaGO Technologies Pvt Ltd') AND UPPER(TRIM(e.guest_name))=UPPER(TRIM(u.name)) AND ROWNUM=1),NVL(u.emp_id,u.user_id))||' Name: '||NVL(u.name,u.user_id) FROM users u WHERE UPPER(u.user_id)=UPPER(b.done_by_vendor)), b.done_by_vendor), "
         "NVL((SELECT NVL((SELECT e.emp_id FROM employees e WHERE UPPER(TRIM(e.company_name))=UPPER('RentaGO Technologies Pvt Ltd') AND UPPER(TRIM(e.guest_name))=UPPER(TRIM(u.name)) AND ROWNUM=1),NVL(u.emp_id,u.user_id))||' Name: '||NVL(u.name,u.user_id) FROM users u WHERE UPPER(u.user_id)=UPPER(b.done_by_driver)), b.done_by_driver), "
-        "guest_contact FROM bookings b"
+        "guest_contact, drop_date, drop_time, package_type, driver_gps_ts, guest_gps_ts FROM bookings b"
     )
 
     params, conds = [], []
@@ -512,6 +1052,18 @@ def list_bookings(
             f"OR TO_CHAR(pickup_date, 'YYYY-MM-DD') LIKE :{n})")
     _like("pickup_time", f_pickup_time)
     _like("vehicle_type", f_vehicle_type)
+    kpi_conditions = {
+        "completed": "status_reason='Trip Completed'",
+        "cancelled": "(booking_status LIKE '3-%' OR status_reason LIKE '%Cancelled%')",
+        "pending": "(booking_status LIKE '1-%' OR status_reason LIKE '%Pending%')",
+        "current": "booking_status NOT LIKE '3-%' AND status_reason<>'Trip Completed' AND TRUNC(pickup_date)=TRUNC(SYSDATE)",
+        "current_pending": "(booking_status LIKE '1-%' OR status_reason LIKE '%Pending%') AND TRUNC(pickup_date)=TRUNC(SYSDATE)",
+        "in_progress": "status_reason='Trip In Progress'",
+        "pickups_2h": "TRUNC(pickup_date)=TRUNC(SYSDATE) AND REGEXP_LIKE(TRIM(pickup_time),'^[0-9]{1,2}:[0-9]{2}$') AND CASE WHEN REGEXP_LIKE(TRIM(pickup_time),'^[0-9]{1,2}:[0-9]{2}$') THEN TO_DATE(TO_CHAR(pickup_date,'YYYY-MM-DD')||' '||TRIM(pickup_time),'YYYY-MM-DD HH24:MI') END BETWEEN SYSDATE AND SYSDATE+(2/24)",
+        "pickup_passed": "TRUNC(pickup_date)=TRUNC(SYSDATE) AND booking_status NOT LIKE '3-%' AND status_reason NOT IN ('Trip In Progress','Trip Completed') AND REGEXP_LIKE(TRIM(pickup_time),'^[0-9]{1,2}:[0-9]{2}$') AND TO_DATE(TO_CHAR(pickup_date,'YYYY-MM-DD')||' '||TRIM(pickup_time),'YYYY-MM-DD HH24:MI') < SYSDATE",
+    }
+    if kpi in kpi_conditions:
+        conds.append(kpi_conditions[kpi])
 
     if conds:
         sql += " WHERE " + " AND ".join(conds)
@@ -519,6 +1071,7 @@ def list_bookings(
     cur.execute(sql, params or None)
     rows = cur.fetchall()
 
+    kpis = booking_trip_kpis(cur, user, len(alerts or [])) if can_view_booking_kpis(user) else None
     visible = visible_booking_ids(user, cur)
     conn.close()
 
@@ -553,6 +1106,8 @@ def list_bookings(
             "vendor_contact": r[19],
             "vendor_email": r[20],
             "vendor_pkg_type": r[21],
+            "drop_date": r[26], "drop_time": r[27],
+            "package_type": r[28], "driver_gps_ts": r[29], "guest_gps_ts": r[30],
             "step": step,
             "step1_state": step1_state, "step2_state": step2_state,
             "step3_state": step3_state,
@@ -561,6 +1116,27 @@ def list_bookings(
             "booked_by_step3": r[24] or "-",
             "guest_contact": r[25] or "-",
         })
+        current = bookings[-1]
+        reason_text = str(current.get("reason") or "")
+        markers = [f"Trip Status Reason: {reason_text or '-'}"]
+        pickup_dt = _pickup_datetime(current)
+        now = datetime.now()
+        active = current.get("status") and not str(current.get("status")).startswith("3-")
+        if active and pickup_dt:
+            if pickup_dt - timedelta(hours=2) <= now < pickup_dt:
+                markers.append("Driver <= 2hrs - Live Location")
+                markers.append("Guest <= 15mins Live Location")
+            if pickup_dt - timedelta(minutes=15) <= now < pickup_dt:
+                markers.append("Driver <= 15mins Reached Location")
+                markers.append("Guest - Start Trip")
+            markers.append("Pickup Time Passed - Red Flag: Yes" if now >= pickup_dt else "Pickup Time Passed - Red Flag: No")
+        if reason_text == "Guest Trip Started - Awaiting Driver Confirmation":
+            markers.extend(["Guest - Start Trip", "Driver - Start Trip"])
+        if reason_text == "Trip In Progress":
+            markers.extend(["Guest - Start Trip", "Driver - Start Trip", "Trip in Progress"])
+        elif reason_text == "Guest Trip Ended - Awaiting Driver Confirmation":
+            markers.extend(["Guest - Start Trip", "Driver - Start Trip", "Guest - End Trip", "Driver - End Trip"])
+        current["status_markers"] = markers
     total_count = len(bookings)
     page_size = 10
     page = max(1, page)
@@ -587,7 +1163,8 @@ def list_bookings(
          "status_filter": status.strip(), "filters": filters,
          "sla_alerts": alerts, "page": page, "total_pages": total_pages,
          "total_count": total_count, "base_query": base_query,
-         "show_vendor_name": _is_rentago_override(user)},
+           "show_vendor_name": _is_rentago_override(user), "kpis": kpis,
+            "show_kpis": can_view_booking_kpis(user)},
     )
 
 
@@ -687,7 +1264,9 @@ def _save_booking_guest(conn, cur, booking_type, booking_id, f):
     if bt == "dummy":
         return False
     if f.get("company_name"):
-        company_id = _resolve_or_create_company_id(cur, f.get("company_name"))
+        company_id = str(f.get("company_id") or "").strip()
+        if not company_id:
+            company_id = _resolve_or_create_company_id(cur, f.get("company_name"))
         f["company_id"] = company_id
         return _save_new_employee(cur, f.get("company_name"), company_id, f.get("guest_name"), f)
     return False
@@ -768,6 +1347,17 @@ def create_booking(
     user = current_user(request)
     if not user:
         return RedirectResponse(url="/auth/login", status_code=303)
+    if module_level(user, "Bookings") is None or not _can_modify_booking(user):
+        return RedirectResponse(url="/home?msg=access-denied", status_code=303)
+    role = (user.get("role") or "").strip().lower()
+    tenant_id = authorization_tenant(user)
+    if role in CORPORATE_PORTAL_ROLES:
+        org_id = (user.get("organization_id") or "").strip()
+        if not tenant_id or not org_id.lower().startswith("corp-"):
+            return RedirectResponse(url="/home?msg=access-denied", status_code=303)
+        company_id = org_id[5:]
+    elif not is_internal_user(user) and not tenant_id:
+        return RedirectResponse(url="/home?msg=access-denied", status_code=303)
 
     conn = get_connection()
     booking_id = _next_booking_id(conn, booking_type)
@@ -798,7 +1388,7 @@ def create_booking(
     planned_route_json = _planned_route_payload(planned_stops, planned_legs)
 
     values = {
-        "booking_id": booking_id, "tenant_id": user.get("tenant_id") or "TEN-RENTA-GO",
+        "booking_id": booking_id, "tenant_id": tenant_id or user.get("tenant_id") or "TEN-RENTA-GO",
         "booking_date": to_date(datetime.now().strftime("%d-%m-%Y")),
         "booking_type": s(booking_type), "company_name": s(company_name),
         "company_id": s(company_id),
@@ -847,6 +1437,15 @@ def create_booking(
         f"VALUES ({binds}, '1-Pending', 'Vehicle & Driver Allocation Pending')",
         list(values.values()),
     )
+    continuity_id, continuity_ref = create_trip_continuity(
+        conn, values["tenant_id"], "NORMAL", status="READY", booking_id=booking_id,
+        guest_id=emp_guest_id.strip() or guest_name.strip(),
+        actual_pickup=_to_dt(f"{pickup_date}T{pickup_time}") if pickup_date and pickup_time else None,
+    )
+    cur.execute("UPDATE bookings SET trip_continuity_id=:1 WHERE booking_id=:2",
+                (continuity_id, booking_id))
+    audit(conn, user, "Trip Continuity Created", booking_id,
+          f"trip_continuity_id={continuity_id}; reference={continuity_ref}; mode=NORMAL")
     _save_booking_guest(
         conn, cur, booking_type, booking_id,
         {
@@ -1046,6 +1645,20 @@ def booking_edit_page(request: Request, booking_id: str):
     if not b:
         conn.close()
         return RedirectResponse(url="/bookings", status_code=303)
+    role = (user.get("role") or "").strip().lower()
+    if is_mobile_request(request) and role in {"guest", "driver"}:
+        mobile_booking_id = str(user.get("mobile_booking_id") or "").strip()
+        current_states = {
+            "Awaiting Driver & Vehicle Allocation",
+            "Booking Confirmed - Driver & Vehicle Allocated",
+            "Guest Trip Started - Awaiting Driver Confirmation",
+            "Trip In Progress",
+            "Guest Trip Ended - Awaiting Driver Confirmation",
+        }
+        if ((mobile_booking_id and mobile_booking_id != str(booking_id))
+                or (not mobile_booking_id and str(b.get("status_reason") or "").strip() not in current_states)):
+            conn.close()
+            return RedirectResponse(url=f"/mobile/{role}?msg=not-allowed", status_code=303)
     visible = visible_booking_ids(user, cur)
     conn.close()
     if not can_view(visible, str(booking_id)):
@@ -1430,6 +2043,17 @@ def submit_feedback(request: Request, booking_id: str,
                     safety_status: str = Form(""), safety_issues: list[str] = Form([])):
     """Allow the guest to submit one rating/comment after trip completion."""
     user = current_user(request)
+    secure_guest_access = None
+    if not user:
+        from ..guest_access import session_access
+        session_conn = get_connection()
+        secure_guest_access = session_access(
+            session_conn.cursor(), request.cookies.get("rentago_guest_trip"))
+        session_conn.close()
+        if secure_guest_access:
+            user = {"user_id": "guest-access:" + secure_guest_access["access_id"],
+                    "role": "guest", "tenant_id": secure_guest_access["tenant_id"],
+                    "name": "Guest Secure Session"}
     if not user:
         return RedirectResponse(url="/auth/login", status_code=303)
     role = (user.get("role") or "").strip().lower()
@@ -1438,7 +2062,12 @@ def submit_feedback(request: Request, booking_id: str,
     conn = get_connection()
     cur = conn.cursor()
     b = _get_booking(cur, booking_id)
-    if not b or not can_view(visible_booking_ids(user, cur), str(booking_id)):
+    secure_authorized = bool(
+        secure_guest_access
+        and str(secure_guest_access.get("booking_id") or "") == str(booking_id)
+        and str(secure_guest_access.get("tenant_id") or "") == str(b.get("tenant_id") or "")
+    ) if b else False
+    if not b or (not secure_authorized and not can_view(visible_booking_ids(user, cur), str(booking_id))):
         conn.close()
         return RedirectResponse(url="/bookings", status_code=303)
     if (b.get("status_reason") or "").strip() != "Trip Completed":
@@ -1487,11 +2116,11 @@ def submit_feedback(request: Request, booking_id: str,
     cur.execute(
         "UPDATE trips SET guest_rating=:1, guest_feedback=:2, feedback_went_well=:3, "
         "feedback_improvements=:4, safety_status=:5, safety_issues=:6, "
-        "incident_priority=:7, incident_status=:8, feedback_owner_group=:9, "
-        "feedback_submitted_on=:10 WHERE booking_id=:11",
+         "incident_priority=:7, incident_status=:8, feedback_owner_group=:9, "
+         "feedback_submitted_on=SYSTIMESTAMP WHERE booking_id=:10",
         (score, comment or None, well or None, improve or None, safety_status,
          issues or None, priority, "Open" if priority else None, feedback_owner_group,
-         datetime.now(), booking_id),
+         booking_id),
     )
     audit(conn, user, "Guest Feedback Submitted", booking_id, f"rating={score}")
     emit_start(conn, "FEEDBACK_SUBMITTED", "BOOKING", booking_id, department="Customer Service",
@@ -1524,24 +2153,32 @@ def share_live_tracking(request: Request, booking_id: str, who: str):
     if not b or not can_view(visible_booking_ids(user, cur), str(booking_id)):
         conn.close()
         return RedirectResponse(url="/bookings", status_code=303)
+    if _is_post_trip_booking_row(b):
+        conn.close()
+        return RedirectResponse(url=f"/mobile/{who}?msg=post-trip-action-not-allowed", status_code=303)
+    if _is_active_late_booking(b) and (b.get("status_reason") or "").strip() != "Trip In Progress":
+        conn.close()
+        return RedirectResponse(url=f"/mobile/{who}?msg=trip-not-started", status_code=303)
     if who == "driver" and not _driver_matches_booking(user, b):
         conn.close()
         return RedirectResponse(url=f"/bookings/{booking_id}?msg=not-driver-action", status_code=303)
-    from ..tracking import ensure_track_token
-    token = ensure_track_token(cur, booking_id)
-    # Use the host currently used by the participant. This avoids stale
-    # Cloudflare quick-tunnel URLs saved in the settings table.
+    from ..universal_access import create_access
+    access_id, access_token, _ = create_access(
+        conn, role=who, user_id=user.get("user_id"),
+        driver_id=user.get("emp_id") if who == "driver" else None,
+        tenant_id=b.get("tenant_id") or user.get("tenant_id"),
+        booking_id=booking_id, created_by=user.get("user_id"), destination=f"{who}_gps",
+    )
+    # One universal link lets Android App Links open the app or renders the
+    # branded fallback page when the app is not installed.
     base = str(request.base_url).rstrip("/")
-    link = f"{base}/track/{booking_id}/{who}/{token}"
+    link = f"{base}/access/{access_token}"
     notify.notify_tracking_shared(conn, user, b, who, link)
-    audit(conn, user, f"{who.title()} Shared Live Tracking", booking_id, link)
+    audit(conn, user, f"{who.title()} Shared Live Tracking", booking_id,
+          f"universal_access_id={access_id}")
     conn.commit()
     conn.close()
-    # The participant must open the private tracking page so the browser can
-    # request GPS permission and begin saving positions.
-    return RedirectResponse(
-        url=f"/mobile/{who}?msg=tracking-shared&tracking_link={quote(link, safe='')}",
-        status_code=303)
+    return RedirectResponse(url=f"/access/{access_token}", status_code=303)
 
 
 @router.post("/{booking_id}/sos")
@@ -1559,6 +2196,9 @@ def trigger_sos(request: Request, booking_id: str):
     if not b or not can_view(visible_booking_ids(user, cur), str(booking_id)):
         conn.close()
         return RedirectResponse(url="/bookings", status_code=303)
+    if _is_post_trip_booking_row(b):
+        conn.close()
+        return RedirectResponse(url=f"/mobile/{role}?msg=post-trip-action-not-allowed", status_code=303)
     notify.notify_sos(conn, user, b)
     emit_start(conn, "SOS_EMERGENCY", "BOOKING", booking_id, department="Safety",
                context={"incident_priority": "P0", "policy_category": "Safety"})
@@ -1577,9 +2217,6 @@ def gps_trail(request: Request, booking_id: str, who: str = ""):
     user = current_user(request)
     if not user:
         return RedirectResponse(url="/auth/login", status_code=303)
-    if _participant_mobile_only(request, user):
-        return RedirectResponse(url=f"/bookings/{booking_id}?msg=mobile-only",
-                                status_code=303)
     if module_level(user, "Bookings") is None:
         return RedirectResponse(url="/home?msg=access-denied", status_code=303)
     conn = get_connection()
@@ -1594,23 +2231,46 @@ def gps_trail(request: Request, booking_id: str, who: str = ""):
         return RedirectResponse(url=f"/bookings/{booking_id}?msg=not-allowed",
                                 status_code=303)
     cur.execute(
-        "SELECT log_id, who, lat, lon, distance_m, location_sync, location_address, captured_dt "
+        "SELECT log_id, who, lat, lon, distance_m, location_sync, location_address, captured_dt, received_at "
         "FROM gps_log WHERE booking_id=:1 ORDER BY captured_dt, log_id",
         (booking_id,),
     )
     rows = cur.fetchall()
+    planned_raw = b.get("planned_route_json") or "{}"
+    if hasattr(planned_raw, "read"):
+        planned_raw = planned_raw.read()
+    b["planned_route_json"] = planned_raw
     conn.close()
 
     captures = []
     driver_pts, guest_pts = [], []
+    def local_gps_time(value):
+        dt = _parse_oracle_dt(value)
+        if not dt:
+            return None
+        return dt.replace(tzinfo=timezone.utc).astimezone(ZoneInfo("Asia/Kolkata"))
+
     for r in rows:
-        dt = _parse_oracle_dt(r[7])
+        dt = local_gps_time(r[7])
+        received = local_gps_time(r[8])
+        from_pickup = None
+        to_drop = None
+        try:
+            if b.get("pickup_lat") is not None and b.get("pickup_lon") is not None:
+                from_pickup = round(distance_meters(float(b["pickup_lat"]), float(b["pickup_lon"]), float(r[2]), float(r[3])), 1)
+            if b.get("drop_lat") is not None and b.get("drop_lon") is not None:
+                to_drop = round(distance_meters(float(r[2]), float(r[3]), float(b["drop_lat"]), float(b["drop_lon"])), 1)
+        except (TypeError, ValueError):
+            pass
         captures.append({
             "log_id": r[0], "who": str(r[1] or "").strip(), "lat": r[2],
             "lon": r[3], "distance_m": r[4],
             "location_sync": str(r[5] or "").strip() or None,
+            "from_pickup_m": from_pickup,
+            "to_drop_m": to_drop,
             "location_address": r[6] or "",
-            "captured": dt.strftime("%d-%m-%Y %I:%M:%S %p") if dt else "-",
+            "captured": dt.strftime("%d-%m-%Y %I:%M:%S %p IST") if dt else "-",
+            "received": received.strftime("%d-%m-%Y %I:%M:%S %p IST") if received else "-",
             "dt": dt,
         })
         try:
@@ -1702,6 +2362,8 @@ def gps_trail_csv(request: Request, booking_id: str):
         conn.close()
         return RedirectResponse(url=f"/bookings/{booking_id}?msg=not-allowed",
                                 status_code=303)
+    cur.execute("SELECT pickup_lat,pickup_lon,drop_lat,drop_lon FROM bookings WHERE booking_id=:1", (booking_id,))
+    route_coords = cur.fetchone() or (None, None, None, None)
     cur.execute(
         "SELECT log_id, who, lat, lon, distance_m, location_sync, location_address, captured_dt "
         "FROM gps_log WHERE booking_id=:1 ORDER BY captured_dt, log_id",
@@ -1709,21 +2371,47 @@ def gps_trail_csv(request: Request, booking_id: str):
     )
     rows = cur.fetchall()
     conn.close()
-    lines = ["Capture ID,Who,Latitude,Longitude,Address,Distance to other party (m),"
-             "Sync status,Captured at"]
+    output = io.StringIO(newline="")
+    writer = csv.writer(output, lineterminator="\n")
+    writer.writerow(("Capture ID", "Who", "Latitude", "Longitude", "Address",
+                     "Distance to other party (km)", "Distance from Pickup (km)",
+                     "Distance to Drop (km)", "Sync status", "Captured at"))
     for r in rows:
         dt = _parse_oracle_dt(r[7])
-        lines.append(",".join([
+        from_pickup = distance_meters(float(route_coords[0]), float(route_coords[1]), float(r[2]), float(r[3])) / 1000 if route_coords[0] is not None and route_coords[1] is not None else None
+        to_drop = distance_meters(float(r[2]), float(r[3]), float(route_coords[2]), float(route_coords[3])) / 1000 if route_coords[2] is not None and route_coords[3] is not None else None
+        writer.writerow([
             str(r[0] or ""), str(r[1] or ""),
             str(r[2] or ""), str(r[3] or ""),
-             str(r[4] or ""), str(r[5] or ""), str(r[6] or ""),
+             str(r[6] or ""), f"{float(r[4]) / 1000:.2f}" if r[4] is not None else "",
+             f"{from_pickup:.2f}" if from_pickup is not None else "",
+             f"{to_drop:.2f}" if to_drop is not None else "", str(r[5] or ""),
              dt.strftime("%d-%m-%Y %I:%M:%S %p") if dt else "",
-        ]))
-    csv_text = "\n".join(lines) + "\n"
+        ])
+    csv_text = output.getvalue()
     return Response(
         content=csv_text, media_type="text/csv",
         headers={"Content-Disposition":
                  f'attachment; filename="{booking_id}-gps-trail.csv"'})
+
+
+@router.post("/{booking_id}/pickup-red-flag-reason")
+def pickup_red_flag_reason(request: Request, booking_id: str, reason: str = Form(...)):
+    user = current_user(request)
+    allowed = {"Done On Time", "Waiting for Guest", "Driver Not Reached", "Vehicle Breakdown", "Technical Reason", "System Down"}
+    if not user or not _is_rentago_override(user) or reason not in allowed:
+        return RedirectResponse(f"/bookings/{booking_id}?msg=not-allowed", status_code=303)
+    conn = get_connection(); cur = conn.cursor()
+    red_reason = f"Pickup Time Passed - {reason}"
+    cur.execute("UPDATE bookings SET status_reason=:1 WHERE booking_id=:2", (red_reason, booking_id))
+    cur.execute("UPDATE trips SET trip_remarks=:1 WHERE booking_id=:2", (red_reason, booking_id))
+    cur.execute("SELECT * FROM bookings WHERE booking_id=:1", (booking_id,))
+    row = cur.fetchone()
+    booking = dict(zip([d[0].lower() for d in cur.description], row)) if row else {"booking_id": booking_id}
+    notify.notify_pickup_not_started(conn, user, booking, reason)
+    audit(conn, user, "Pickup Time Passed Red Flag Reason", booking_id, reason)
+    conn.commit(); conn.close()
+    return RedirectResponse(f"/bookings/{booking_id}?msg=red-flag-reason-saved", status_code=303)
 
 
 @router.get("/{booking_id}")
@@ -1871,6 +2559,9 @@ def booking_detail(request: Request, booking_id: str):
         planned_route = json.loads(planned_raw or "{}")
     except (TypeError, ValueError):
         planned_route = {}
+    pickup_passed_not_started = bool(_pickup_datetime(data) and _pickup_datetime(data) < datetime.now()
+        and str(data.get("booking_status") or "").startswith("2-")
+        and str(data.get("status_reason") or "") not in {"Trip In Progress", "Trip Completed"})
     conn.close()
     return templates.TemplateResponse(
         "bookings/detail.html",
@@ -1903,7 +2594,8 @@ def booking_detail(request: Request, booking_id: str):
            "show_planned_route": _is_rentago_override(user),
            "show_driver_profile": ((user.get("role") or "").strip().lower() == "guest"
                                    or _is_corporate(user) or _is_rentago_override(user)),
-          "show_rentago_triggers": _is_rentago_override(user),
+           "show_rentago_triggers": _is_rentago_override(user),
+           "pickup_passed_not_started": pickup_passed_not_started,
           "guest_contact_display": _display_phone(data.get("guest_contact")),
           "admin_contact_display": _display_phone(data.get("admin_contact")),
          "cancellation_policy": [
@@ -1940,8 +2632,13 @@ def start_trip(request: Request, booking_id: str,
         conn.close()
         return RedirectResponse(url="/bookings", status_code=303)
     b = row
+    active_late = _is_active_late_booking(b)
+    if _is_post_trip_booking_row(b):
+        conn.close()
+        return RedirectResponse(url=f"/bookings/{booking_id}?msg=post-trip-action-not-allowed", status_code=303)
 
-    if not _is_rentago_override(user) and not _rentago_operator_present(cur):
+    if ((user.get("role") or "").strip().lower() not in {"guest", "driver"}
+            and not _is_rentago_override(user) and not _rentago_operator_present(cur)):
         conn.close()
         return RedirectResponse(url=f"/bookings/{booking_id}?msg=rentago-presence-required", status_code=303)
 
@@ -1954,7 +2651,10 @@ def start_trip(request: Request, booking_id: str,
     if reason == "Trip In Progress":
         conn.close()
         return RedirectResponse(url=f"/bookings/{booking_id}?msg=in-progress", status_code=303)
-    if reason != "Guest Trip Started - Awaiting Driver Confirmation":
+    if active_late and reason != "Late Entry - Active":
+        conn.close()
+        return RedirectResponse(url=f"/bookings/{booking_id}?msg=invalid-late-state", status_code=303)
+    if not active_late and reason != "Guest Trip Started - Awaiting Driver Confirmation":
         conn.close()
         return RedirectResponse(url=f"/bookings/{booking_id}?msg=guest-must-start", status_code=303)
     try:
@@ -1963,7 +2663,7 @@ def start_trip(request: Request, booking_id: str,
             raise ValueError
     except (TypeError, ValueError):
         conn.close()
-        return RedirectResponse(url=f"/bookings/{booking_id}?msg=pickup-odometer-required", status_code=303)
+        return _trip_action_redirect(user, booking_id, "pickup-odometer-required")
 
     trip_id = _next_trip_id(conn)
     start_now = datetime.now()
@@ -1974,13 +2674,14 @@ def start_trip(request: Request, booking_id: str,
             drop_address, driver_name, vehicle_no, booking_status, trip_status,
             driver_mobile, driver_reporting_time, pickup_start_time, actual_start_dt,
             pickup_start_km,
-            google_maps_link
-        ) VALUES (:1,:2,:3,:4,:5,:6,:7,:8,:9,'In Progress','In Progress',:10,:11,:12,:13,:14,:15)""",
+            google_maps_link, trip_continuity_id
+        ) VALUES (:1,:2,:3,:4,:5,:6,:7,:8,:9,'In Progress','In Progress',:10,:11,:12,:13,:14,:15,:16)""",
         (
             trip_id, b.get("tenant_id") or "TEN-RENTA-GO", booking_id, guest, b.get("pickup_date"), b.get("pickup_address"),
             b.get("drop_address"), b.get("driver_name"), b.get("vehicle_no"),
             b.get("driver_contact"), b.get("driver_reporting_time") or "",
             start_now.strftime("%I:%M %p"), start_now, start_km, "",
+            b.get("trip_continuity_id"),
         ),
     )
     cur.execute(
@@ -1989,12 +2690,24 @@ def start_trip(request: Request, booking_id: str,
         (user["user_id"], start_now, booking_id),
     )
     audit(conn, user, "Trip Started (Driver)", booking_id, f"Trip {trip_id} In Progress")
+    if active_late and b.get("trip_continuity_id"):
+        update_status(conn, b.get("trip_continuity_id"), "TRIP_STARTED", "TRIP_STARTED",
+                      user.get("user_id"), {"booking_id": booking_id})
+        append_event(conn, b.get("trip_continuity_id"), "START_ODOMETER",
+                     {"value": start_km}, "DRIVER", user.get("user_id"))
     complete_for_entity(conn, "BOOKING", booking_id, ("TRIP_STARTED_GUEST",), "Driver confirmed trip start")
     emit_start(conn, "TRIP_STARTED_DRIVER", "BOOKING", booking_id,
                context={"booking_type": b.get("booking_type"), "corporate_id": b.get("company_id"), "policy_category": "Booking"})
+    tracking_link = ""
+    if active_late and (user.get("role") or "").strip().lower() == "driver":
+        from ..tracking import ensure_track_token
+        token = ensure_track_token(cur, booking_id)
+        tracking_link = f"{str(request.base_url).rstrip('/')}/track/{booking_id}/driver/{token}"
     conn.commit()
     conn.close()
-    return RedirectResponse(url=f"/bookings/{booking_id}?msg=trip-started", status_code=303)
+    if tracking_link:
+        return RedirectResponse(url=f"/mobile/driver?msg=trip-started&tracking_link={quote(tracking_link, safe='')}", status_code=303)
+    return _trip_action_redirect(user, booking_id, "trip-started")
 
 
 @router.post("/{booking_id}/trip/start-guest")
@@ -2018,7 +2731,15 @@ def start_trip_guest(request: Request, booking_id: str):
     if not b:
         conn.close()
         return RedirectResponse(url="/bookings", status_code=303)
-    if not _is_rentago_override(user) and not _rentago_operator_present(cur):
+    active_late = _is_active_late_booking(b)
+    if active_late:
+        conn.close()
+        return RedirectResponse(url=f"/bookings/{booking_id}?msg=driver-start-required", status_code=303)
+    if _is_post_trip_booking_row(b):
+        conn.close()
+        return RedirectResponse(url=f"/bookings/{booking_id}?msg=post-trip-action-not-allowed", status_code=303)
+    if (not active_late and (user.get("role") or "").strip().lower() not in {"guest", "driver"}
+            and not _is_rentago_override(user) and not _rentago_operator_present(cur)):
         conn.close()
         return RedirectResponse(url=f"/bookings/{booking_id}?msg=rentago-presence-required", status_code=303)
     if not _can_guest_trip_action(user):
@@ -2051,7 +2772,7 @@ def start_trip_guest(request: Request, booking_id: str):
                context={"booking_type": b.get("booking_type"), "corporate_id": b.get("company_id"), "policy_category": "Booking"})
     conn.commit()
     conn.close()
-    return RedirectResponse(url=f"/bookings/{booking_id}?msg=guest-started", status_code=303)
+    return _trip_action_redirect(user, booking_id, "guest-started")
 
 
 @router.post("/{booking_id}/trip/end-guest")
@@ -2074,7 +2795,12 @@ def end_trip_guest(request: Request, booking_id: str):
     if not b:
         conn.close()
         return RedirectResponse(url="/bookings", status_code=303)
-    if not _is_rentago_override(user) and not _rentago_operator_present(cur):
+    if _is_post_trip_booking_row(b):
+        conn.close()
+        return RedirectResponse(url=f"/bookings/{booking_id}?msg=post-trip-action-not-allowed", status_code=303)
+    if ((user.get("role") or "").strip().lower() != "guest"
+            and not _is_rentago_override(user)
+            and not _rentago_operator_present(cur)):
         conn.close()
         return RedirectResponse(url=f"/bookings/{booking_id}?msg=rentago-presence-required", status_code=303)
     if not _can_guest_trip_action(user):
@@ -2103,7 +2829,7 @@ def end_trip_guest(request: Request, booking_id: str):
     notify.notify_trip_trigger(conn, user, b, "Guest/Admin End Trip")
     conn.commit()
     conn.close()
-    return RedirectResponse(url=f"/bookings/{booking_id}?msg=guest-ended", status_code=303)
+    return _trip_action_redirect(user, booking_id, "guest-ended")
 
 
 @router.post("/{booking_id}/trip/end-driver")
@@ -2128,7 +2854,11 @@ def end_trip_driver(request: Request, booking_id: str,
     if not b:
         conn.close()
         return RedirectResponse(url="/bookings", status_code=303)
-    if not _is_rentago_override(user) and not _rentago_operator_present(cur):
+    active_late = _is_active_late_booking(b)
+    if _is_post_trip_booking_row(b):
+        conn.close()
+        return RedirectResponse(url=f"/bookings/{booking_id}?msg=post-trip-action-not-allowed", status_code=303)
+    if not active_late and not _is_rentago_override(user) and not _rentago_operator_present(cur):
         conn.close()
         return RedirectResponse(url=f"/bookings/{booking_id}?msg=rentago-presence-required", status_code=303)
     if not _can_driver_trip_action(user, b):
@@ -2140,7 +2870,10 @@ def end_trip_driver(request: Request, booking_id: str,
     if reason == "Trip Completed":
         conn.close()
         return RedirectResponse(url=f"/bookings/{booking_id}?msg=completed", status_code=303)
-    if reason != "Guest Trip Ended - Awaiting Driver Confirmation":
+    if active_late and reason != "Trip In Progress":
+        conn.close()
+        return RedirectResponse(url=f"/bookings/{booking_id}?msg=not-in-progress", status_code=303)
+    if not active_late and reason != "Guest Trip Ended - Awaiting Driver Confirmation":
         conn.close()
         return RedirectResponse(url=f"/bookings/{booking_id}?msg=guest-must-end", status_code=303)
 
@@ -2150,7 +2883,7 @@ def end_trip_driver(request: Request, booking_id: str,
             raise ValueError
     except (TypeError, ValueError):
         conn.close()
-        return RedirectResponse(url=f"/bookings/{booking_id}?msg=drop-odometer-required", status_code=303)
+        return _trip_action_redirect(user, booking_id, "drop-odometer-required")
 
     now = datetime.now()
     trip_row = _find_trip_row(cur, booking_id)
@@ -2170,6 +2903,21 @@ def end_trip_driver(request: Request, booking_id: str,
         "done_by_driver=:1 WHERE booking_id=:2",
         (user["user_id"], booking_id),
     )
+    cur.execute(
+        "UPDATE tracking_sessions SET status='ENDED', ended_at=SYSTIMESTAMP "
+        "WHERE booking_id=:1 AND status IN ('ACTIVE','PAUSED')",
+        (booking_id,),
+    )
+    if active_late and b.get("trip_continuity_id"):
+        cur.execute(
+            "UPDATE trip_continuity SET status='TRIP_ENDED', trip_ended_at=SYSTIMESTAMP, "
+            "end_odometer=:1, updated_at=SYSTIMESTAMP WHERE trip_continuity_id=:2",
+            (end_km, b.get("trip_continuity_id")),
+        )
+        update_status(conn, b.get("trip_continuity_id"), "TRIP_ENDED", "TRIP_ENDED",
+                      user.get("user_id"), {"booking_id": booking_id, "end_odometer": end_km})
+        append_event(conn, b.get("trip_continuity_id"), "END_ODOMETER",
+                     {"value": end_km}, "DRIVER", user.get("user_id"))
     invoice_id = _generate_provisional_invoice(conn, b, now)
     _ensure_vendor_invoice(conn, b, now)
     audit(conn, user, "Trip Completed (Driver)", booking_id,
@@ -2180,10 +2928,13 @@ def end_trip_driver(request: Request, booking_id: str,
     notify.notify_trip_trigger(conn, user, b, "Driver End Trip / Feedback Pending")
     conn.commit()
     conn.close()
+    if request.headers.get("x-rentago-live-trip") == "1":
+        return JSONResponse({"ok": True, "status": "Trip Completed", "booking_id": booking_id,
+                             "invoice_id": invoice_id})
     target = f"/bookings/{booking_id}?msg=trip-completed"
     if invoice_id:
         target += f"&inv={invoice_id}"
-    return RedirectResponse(url=target, status_code=303)
+    return _trip_action_redirect(user, booking_id, "trip-completed")
 
 
 @router.post("/{booking_id}/location/{who}")
@@ -2407,17 +3158,39 @@ def allocate_vendor(
         conn.close()
         return RedirectResponse(url=f"/bookings/{booking_id}?msg=missing-vendor",
                                 status_code=303)
-    # Auto-store new vendor in masters if not already present
+    role = (user.get("role") or "").strip().lower()
+    authorized_vendor_id = _authorized_vendor_id(user, b)
+    if role in VENDOR_PORTAL_ROLES and not authorized_vendor_id:
+        conn.close()
+        return RedirectResponse(url=f"/bookings/{booking_id}?msg=vendor-not-allowed", status_code=303)
+
+    # Resolve vendor only after the authenticated vendor boundary is established.
     vname = vendor_name.strip()
-    cur.execute(
-        "SELECT vendor_name FROM vendors WHERE UPPER(TRIM(vendor_name))=UPPER(TRIM(:1))",
-        (vname,),
-    )
-    if not cur.fetchone():
-        vid = next_vendor_id(cur)
+    mutation_tenant = authorization_tenant(user) or user.get("tenant_id") or "TEN-RENTA-GO"
+    if authorized_vendor_id:
+        cur.execute(
+            "SELECT vendor_name FROM vendors WHERE vendor_id=:1 AND tenant_id=:2",
+            (authorized_vendor_id, mutation_tenant),
+        )
+        vendor_row = cur.fetchone()
+        if not vendor_row or str(vendor_row[0] or "").strip().lower() != vname.lower():
+            conn.close()
+            return RedirectResponse(url=f"/bookings/{booking_id}?msg=vendor-not-allowed", status_code=303)
+        vendor_id = authorized_vendor_id
+    else:
+        cur.execute(
+            "SELECT vendor_id FROM vendors WHERE UPPER(TRIM(vendor_name))=UPPER(TRIM(:1)) "
+            "AND tenant_id=:2",
+            (vname, mutation_tenant),
+        )
+        vendor_row = cur.fetchone()
+        vendor_id = vendor_row[0] if vendor_row else None
+    
+    if not vendor_id:
+        vendor_id = next_vendor_id(cur)
         cur.execute(
             "INSERT INTO vendors (vendor_id, tenant_id, vendor_name, status) VALUES (:1, :2, :3, 'Active')",
-            (vid, user.get("tenant_id") or "TEN-RENTA-GO", vname),
+            (vendor_id, mutation_tenant, vname),
         )
     elapsed = _sla_elapsed_minutes(cur, booking_id)
     if elapsed is not None and elapsed > 30 \
@@ -2436,13 +3209,13 @@ def allocate_vendor(
         deadline_text = elig["vendor_deadline"].strftime("%d-%m-%Y %I:%M %p")
     override = "Y" if (confirm_lead or "").strip().lower() in ("1", "true", "yes", "on") else ""
     cur.execute(
-        "UPDATE bookings SET vendor_name=:1, vendor_contact=:2, vendor_email=:3, "
-        "vendor_pkg_type=:4, vendor_deadline=:5, alloc_lead_override=:6, "
-        "step2_time=:7, "
+        "UPDATE bookings SET vendor_id=:1, vendor_name=:2, vendor_contact=:3, vendor_email=:4, "
+        "vendor_pkg_type=:5, vendor_deadline=:6, alloc_lead_override=:7, "
+        "step2_time=:8, "
         "booking_status='1-Pending', "
-        "status_reason='Awaiting Driver & Vehicle Allocation', done_by_vendor=:8 "
-        "WHERE booking_id=:9",
-        (vendor_name.strip(), vendor_contact.strip(), vendor_email.strip(),
+        "status_reason='Awaiting Driver & Vehicle Allocation', done_by_vendor=:9 "
+        "WHERE booking_id=:10",
+         (vendor_id, vendor_name.strip(), vendor_contact.strip(), vendor_email.strip(),
          vendor_pkg_type.strip(), deadline_text, override, datetime.now(),
          user["user_id"], booking_id),
     )
@@ -2518,29 +3291,58 @@ def allocate_driver(
         conn.close()
         return RedirectResponse(url=f"/bookings/{booking_id}?msg=lead-red-flag",
                                 status_code=303)
-    # Auto-store new driver in masters if not already present
+    vendor_id = b.get("vendor_id")
+    authorized_vendor_id = _authorized_vendor_id(user, b)
+    if (user.get("role") or "").strip().lower() in VENDOR_PORTAL_ROLES:
+        if not authorized_vendor_id:
+            conn.close()
+            return RedirectResponse(url=f"/bookings/{booking_id}?msg=vendor-not-allowed", status_code=303)
+        vendor_id = authorized_vendor_id
+    if not vendor_id:
+        cur.execute(
+            "SELECT vendor_id FROM vendors WHERE UPPER(TRIM(vendor_name))=UPPER(TRIM(:1)) "
+            "AND tenant_id=:2",
+            (b.get("vendor_name") or "", b.get("tenant_id") or user.get("tenant_id") or "TEN-RENTA-GO"),
+        )
+        vendor_row = cur.fetchone()
+        vendor_id = vendor_row[0] if vendor_row else None
+    if not vendor_id:
+        conn.close()
+        return RedirectResponse(url=f"/bookings/{booking_id}?msg=vendor-identity-missing", status_code=303)
+
+    # Auto-store new driver in the selected vendor's master data.
     dname = driver_name.strip()
     cur.execute(
-        "SELECT driver_name FROM drivers WHERE UPPER(TRIM(driver_name))=UPPER(TRIM(:1))",
-        (dname,),
+        "SELECT driver_name, mobile FROM drivers WHERE UPPER(TRIM(driver_name))=UPPER(TRIM(:1)) "
+        "AND vendor_id=:2 AND tenant_id=:3",
+        (dname, vendor_id, b.get("tenant_id") or user.get("tenant_id") or "TEN-RENTA-GO"),
     )
-    if not cur.fetchone():
+    driver_row = cur.fetchone()
+    if driver_row:
+        if driver_contact.strip() and not str(driver_row[1] or "").strip():
+            cur.execute(
+                "UPDATE drivers SET mobile=:1 WHERE UPPER(TRIM(driver_name))=UPPER(TRIM(:2)) "
+                "AND vendor_id=:3 AND tenant_id=:4",
+                (driver_contact.strip(), dname, vendor_id, b.get("tenant_id") or user.get("tenant_id") or "TEN-RENTA-GO"),
+            )
+    else:
         did = next_driver_id(cur)
         cur.execute(
-            "INSERT INTO drivers (driver_id, tenant_id, driver_name, status) VALUES (:1, :2, :3, 'Active')",
-            (did, user.get("tenant_id") or "TEN-RENTA-GO", dname),
+            "INSERT INTO drivers (driver_id, tenant_id, vendor_id, driver_name, mobile, status) VALUES (:1, :2, :3, :4, :5, 'Active')",
+            (did, b.get("tenant_id") or user.get("tenant_id") or "TEN-RENTA-GO", vendor_id, dname, driver_contact.strip() or None),
         )
-    # Auto-store new vehicle reg number in masters if not already present
+    # Auto-store new vehicle in the selected vendor's master data.
     vno = vehicle_no.strip()
     cur.execute(
-        "SELECT reg_number FROM vehicles WHERE UPPER(TRIM(reg_number))=UPPER(TRIM(:1))",
-        (vno,),
+        "SELECT reg_number FROM vehicles WHERE UPPER(TRIM(reg_number))=UPPER(TRIM(:1)) "
+        "AND vendor_id=:2 AND tenant_id=:3",
+        (vno, vendor_id, b.get("tenant_id") or user.get("tenant_id") or "TEN-RENTA-GO"),
     )
     if not cur.fetchone():
         vid = next_vehicle_id(cur)
         cur.execute(
-            "INSERT INTO vehicles (vehicle_id, tenant_id, reg_number, status) VALUES (:1, :2, :3, 'Active')",
-            (vid, user.get("tenant_id") or "TEN-RENTA-GO", vno),
+            "INSERT INTO vehicles (vehicle_id, tenant_id, vendor_id, reg_number, status) VALUES (:1, :2, :3, :4, 'Active')",
+            (vid, b.get("tenant_id") or user.get("tenant_id") or "TEN-RENTA-GO", vendor_id, vno),
         )
     report_time = driver_reporting_time.strip() or _driver_reporting_time(b.get("pickup_time"))
     override = "Y" if (confirm_lead or "").strip().lower() in ("1", "true", "yes", "on") else ""
@@ -2568,6 +3370,25 @@ def allocate_driver(
         (_uuid.uuid4().hex[:32], booking_id),
     )
 
+    audit(conn, user, "Driver & Vehicle Allocated (Step 3)", booking_id,
+          f"{driver_name.strip()} / {vehicle_no.strip()}"
+          + (" | LEAD OVERRIDE" if override else ""))
+    complete_for_entity(conn, "BOOKING", booking_id, ("VENDOR_ALLOCATED",), "Driver and vehicle allocated")
+    emit_start(conn, "DRIVER_ALLOCATED", "BOOKING", booking_id,
+               context={"booking_type": b.get("booking_type"), "corporate_id": b.get("company_id"),
+                        "vehicle_type": b.get("vehicle_type"), "policy_category": "Booking"})
+    emit_start(conn, "CUSTOMER_CONFIRMATION_REQUIRED", "BOOKING", booking_id,
+               context={"booking_type": b.get("booking_type"), "corporate_id": b.get("company_id"),
+                        "policy_category": "Booking"})
+    notify.notify_step3(conn, user, dict(b, driver_name=driver_name.strip(),
+                                         driver_contact=driver_contact.strip(),
+                                         vehicle_no=vehicle_no.strip(),
+                                         driver_reporting_time=report_time))
+    conn.commit()
+    conn.close()
+    return RedirectResponse(url=f"/bookings/{booking_id}?msg=confirmed-allocated&notify=1",
+                            status_code=303)
+
 
 @router.get("/{booking_id}/driver-profile")
 def driver_profile(request: Request, booking_id: str):
@@ -2577,16 +3398,24 @@ def driver_profile(request: Request, booking_id: str):
         return RedirectResponse(url=f"/bookings/{booking_id}?msg=not-allowed", status_code=303)
     conn = get_connection(); cur = conn.cursor()
     booking = _get_booking(cur, booking_id)
+    from_mobile = request.query_params.get("from") == "mobile"
     if not booking or not can_view(visible_booking_ids(user, cur), str(booking_id)):
-        conn.close(); return RedirectResponse(url="/bookings", status_code=303)
+        conn.close(); return RedirectResponse(
+            url=f"/mobile/guest?msg=not-found" if from_mobile else "/bookings",
+            status_code=303)
     driver_name = (booking.get("driver_name") or "").strip()
     cur.execute(
         "SELECT driver_name,mobile,languages_known,passport_photo_path,license_expiry,police_verification,background_check,status,compliance_status "
-        "FROM drivers WHERE UPPER(TRIM(driver_name))=UPPER(TRIM(:1)) FETCH FIRST 1 ROWS ONLY", (driver_name,))
+        "FROM drivers WHERE UPPER(TRIM(driver_name))=UPPER(TRIM(:1)) AND tenant_id=:2 "
+        "AND (vendor_id=:3 OR :3 IS NULL) FETCH FIRST 1 ROWS ONLY",
+        (driver_name, booking.get("tenant_id"), booking.get("vendor_id")))
     row = cur.fetchone()
     if not row:
-        conn.close(); return RedirectResponse(url=f"/bookings/{booking_id}?msg=driver-profile-not-found", status_code=303)
-    cur.execute("SELECT COUNT(1) FROM trips WHERE UPPER(TRIM(driver_name))=UPPER(TRIM(:1)) AND trip_status='Trip Completed'", (driver_name,))
+        conn.close(); return RedirectResponse(
+            url=f"/mobile/guest?msg=driver-profile-not-found" if from_mobile
+            else f"/bookings/{booking_id}?msg=driver-profile-not-found",
+            status_code=303)
+    cur.execute("SELECT COUNT(1) FROM trips WHERE UPPER(TRIM(driver_name))=UPPER(TRIM(:1)) AND tenant_id=:2 AND trip_status='Trip Completed'", (driver_name, booking.get("tenant_id")))
     completed = int(cur.fetchone()[0] or 0)
     today = datetime.now().date()
     license_expiry = row[4].date() if hasattr(row[4], "date") else row[4]
@@ -2594,7 +3423,7 @@ def driver_profile(request: Request, booking_id: str):
                              (not license_expiry or license_expiry >= today) and
                              str(row[5] or "").lower() not in ("no", "failed", "expired") and
                              str(row[6] or "").lower() not in ("no", "failed", "expired")))
-    cur.execute("SELECT insurance_exp,permit_exp,fitness_exp,puc_exp,status,compliance_status FROM vehicles WHERE UPPER(TRIM(reg_number))=UPPER(TRIM(:1)) FETCH FIRST 1 ROWS ONLY", (booking.get("vehicle_no") or ""))
+    cur.execute("SELECT insurance_exp,permit_exp,fitness_exp,puc_exp,status,compliance_status FROM vehicles WHERE UPPER(TRIM(reg_number))=UPPER(TRIM(:1)) AND tenant_id=:2 FETCH FIRST 1 ROWS ONLY", (booking.get("vehicle_no") or "", booking.get("tenant_id")))
     vehicle = cur.fetchone()
     vehicle_compliance = False
     if vehicle:
@@ -2629,26 +3458,6 @@ def recalculate_planned_route(request: Request, booking_id: str):
     audit(conn, user, "Planned Route Recalculated", booking_id, f"kms={kms}; legs={len(legs)}")
     conn.commit(); conn.close()
     return RedirectResponse(url=f"/bookings/{booking_id}?msg=route-recalculated", status_code=303)
-    audit(conn, user, "Driver & Vehicle Allocated (Step 3)", booking_id,
-          f"{driver_name.strip()} / {vehicle_no.strip()}"
-          + (" | LEAD OVERRIDE" if override else ""))
-    complete_for_entity(conn, "BOOKING", booking_id, ("VENDOR_ALLOCATED",), "Driver and vehicle allocated")
-    emit_start(conn, "DRIVER_ALLOCATED", "BOOKING", booking_id,
-               context={"booking_type": b.get("booking_type"), "corporate_id": b.get("company_id"),
-                         "vehicle_type": b.get("vehicle_type"), "policy_category": "Booking"})
-    emit_start(conn, "CUSTOMER_CONFIRMATION_REQUIRED", "BOOKING", booking_id,
-               context={"booking_type": b.get("booking_type"), "corporate_id": b.get("company_id"),
-                        "policy_category": "Booking"})
-    notify.notify_step3(conn, user, dict(b, driver_name=driver_name.strip(),
-                                         driver_contact=driver_contact.strip(),
-                                         vehicle_no=vehicle_no.strip(),
-                                         driver_reporting_time=report_time))
-    conn.commit()
-    conn.close()
-    return RedirectResponse(url=f"/bookings/{booking_id}?msg=confirmed-allocated&notify=1",
-                            status_code=303)
-
-
 # ---------------------------------------------------------------------------
 # Cancellation (SOP section 6)
 # ---------------------------------------------------------------------------
@@ -3012,7 +3821,7 @@ def _save_trip_actuals(conn, b, trip, now):
     end_km = _as_float(trip.get("drop_end_km"))
     actual_km = max(0.0, round(end_km - start_km, 1))
 
-    pickup_dt = _pickup_datetime(b)
+    pickup_dt = _parse_oracle_dt(trip.get("actual_start_dt")) or _pickup_datetime(b)
     actual_hrs = 0.0
     if pickup_dt is not None:
         mins = (now - pickup_dt).total_seconds() / 60.0

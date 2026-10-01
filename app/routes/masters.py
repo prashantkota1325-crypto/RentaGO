@@ -9,20 +9,29 @@ Roles Matrix grid editor (Super Admin).
 """
 
 from datetime import datetime
+from io import BytesIO
 from urllib.parse import quote
 
-from fastapi import APIRouter, Request
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Request, UploadFile, File, Form
+from fastapi.responses import RedirectResponse, JSONResponse
+import openpyxl
 
 from ..auth import current_user, module_level, clear_roles_cache
 from ..templating import templates
 from ..db import get_connection, run_script
 from ..audit import audit
 from .. import ids
+from ..scope import is_internal_user
+from ..ratecard_import import validate_workbook, import_rows
 
 router = APIRouter(prefix="/masters")
 
 PAGE_SIZE = 100
+
+
+def _master_access_allowed(user):
+    """Generic masters are internal RentaGO administration surfaces."""
+    return is_internal_user(user)
 
 # Keep the matrix editor complete even when a workbook import did not contain
 # rows for newer web modules. Missing rows remain no-access until an admin
@@ -258,24 +267,26 @@ MASTERS = {
         ],
     },
     "ratecards": {
-        "title": "Ratecards", "sheet": "Ratecards", "table": "ratecards",
+        "title": "Vendor Rate Chart", "sheet": "Ratecards", "table": "ratecards",
         "pk": "rate_card_id", "gen": "next_ratecard_id",
-        "list": [("sr_no", "Sr. No."), ("company_id", "Company ID"), ("legal_name", "Legal Name"),
-                 ("city", "CITY"), ("category", "VEHICLE Category"), ("vehicle_model", "VEHICLE MODEL"),
-                 ("package_name", "PACKAGE NAME"), ("package_rate", "Package Rate"),
+        "base_where": "UPPER(NVL(owner_type,'VENDOR'))='VENDOR'",
+        "list": [("sr_no", "Sr.No."), ("company_id", "Company Id"), ("legal_name", "Legal Name"),
+                 ("group_name", "Group"), ("city", "City"), ("state", "State"),
+                 ("category", "Vehicle Category"), ("vehicle_model", "Vehicle Model"),
+                 ("package_name", "Package Name"), ("package_rate", "Package Rate"),
                  ("pkg_fixed_kms", "Pkg Fixed Km's"), ("pkg_fixed_hrs", "Pkg Fixed Hr's"),
-                 ("extra_hr_rate", "Extra Hr Rate"), ("extra_km_rate", "Extra KM Rate"),
-                 ("toll_amt", "Toll Amt"), ("parking_amt", "Parking Amt"),
-                 ("da", "DA"), ("night_allowance_after_10_pm", "Night Allowance After 10 PM"),
-                 ("night_allowance_after_11_pm", "Night Allowance After 11 PM"),
+                 ("extra_km_rate", "Extra Km Rate"), ("extra_hr_rate", "Extra Hr Rate"),
+                 ("toll_amt", "Toll Amt"), ("parking_amt", "Parking Amt"), ("da", "Da"),
+                 ("night_allowance_after_10_pm", "Night Allowance After 10 Pm"),
+                 ("night_allowance_after_11_pm", "Night Allowance After 11 Pm"),
                  ("garage_to_garage_kms", "Garage To Garage Km's"),
                  ("garage_to_garage_pct", "Garage To Garage %")],
-        "search": ["sr_no", "company_id", "legal_name", "category", "vehicle_model"],
+        "search": ["company_id", "legal_name", "city", "category", "vehicle_model", "package_name"],
         "fields": [
             _f("sr_no", "Sr. No.", "number"),
-            _f("company_id", "Company ID"),
-            _f("legal_name", "Legal Name", required=True),
-            _f("city", "CITY"),
+             _f("company_id", "Company Id"), _f("group_name", "Group"),
+             _f("legal_name", "Legal Name", required=True),
+             _f("city", "City"), _f("state", "State"),
             _f("category", "VEHICLE Category", required=True),
             _f("vehicle_model", "VEHICLE MODEL"),
             _f("package_name", "PACKAGE NAME"),
@@ -338,6 +349,9 @@ MASTERS = {
                  ("user_id", "User"), ("audit_user", "Name"), ("action", "Action"),
                  ("record", "Record"), ("notes", "Notes")],
         "search": ["user_id", "audit_user", "action", "record"],
+        "filters": [("user_id", "User"), ("audit_user", "Name")],
+        "dropdown_filters": ["user_id", "audit_user"],
+        "date_filters": [("from_date", "From Date"), ("to_date", "To Date")],
         "fields": [],
     },
     "login-log": {
@@ -374,6 +388,16 @@ MASTERS["rentago-employees"] = {
     "gen": "next_rentago_employee_id",
     "base_where": "UPPER(TRIM(company_name))='RENTAGO TECHNOLOGIES PVT LTD'",
     "defaults": {"company_name": "RentaGO Technologies Pvt Ltd"},
+}
+MASTERS["company-ratecards"] = {
+    **MASTERS["ratecards"],
+    "title": "Company Rate Chart",
+    "base_where": "UPPER(owner_type)='COMPANY'",
+}
+MASTERS["individual-ratecards"] = {
+    **MASTERS["ratecards"],
+    "title": "Individual Rate Chart",
+    "base_where": "UPPER(owner_type)='INDIVIDUAL'",
 }
 
 
@@ -431,6 +455,8 @@ def masters_index(request: Request):
     user = current_user(request)
     if not user:
         return RedirectResponse(url="/auth/login", status_code=303)
+    if not _master_access_allowed(user):
+        return RedirectResponse(url="/home?msg=access-denied", status_code=303)
     cards = []
     for key, cfg in MASTERS.items():
         level = module_level(user, cfg["sheet"])
@@ -441,11 +467,170 @@ def masters_index(request: Request):
         cards.append({"key": key, "title": cfg["title"], "level": level,
                       "readonly": cfg.get("readonly", False)})
     matrix = module_level(user, "Roles Matrix")
+    requested_columns = [
+        ["companies", "company-entities", "employees", "corporate-admin-contacts", "contacts", "contracts", "company-ratecards"],
+        ["rentago-employees", "roles-matrix", "leads", "settings", "login-log", "audit-log", "otp-log"],
+        ["individuals", "individual-ratecards", "vendors", "ratecards", "vehicles", "drivers"],
+    ]
+    card_map = {card["key"]: card for card in cards}
+    columns = []
+    for keys in requested_columns:
+        columns.append([card_map[key] for key in keys if key in card_map])
+    if matrix == "F":
+        columns[1].insert(1, {"key": "roles-matrix", "title": "Role Matrix", "level": "F", "readonly": False})
+    listed = {card["key"] for column in columns for card in column}
+    columns[1].extend([card for card in cards if card["key"] not in listed])
     return templates.TemplateResponse(
         "masters/index.html",
         {"request": request, "user": user, "cards": cards,
-         "matrix_access": matrix == "F"},
+          "matrix_access": matrix == "F", "columns": columns},
     )
+
+@router.get("/company-ratecards")
+def company_ratecards_page(request: Request):
+    user = current_user(request)
+    level = module_level(user, "Ratecards") if user else None
+    if not user or not _master_access_allowed(user) or level is None:
+        return RedirectResponse(url="/home?msg=access-denied", status_code=303)
+    return master_list(request, "company-ratecards")
+
+@router.get("/ratecards/import")
+def ratecard_import_page(request: Request, msg: str = "", owner_type: str = "VENDOR"):
+    user = current_user(request)
+    if not user or not _master_access_allowed(user) or module_level(user, "Ratecards") != "F":
+        return RedirectResponse(url="/home?msg=access-denied", status_code=303)
+    return templates.TemplateResponse("masters/ratecard_import.html",
+                                     {"request": request, "user": user, "message": msg,
+                                      "owner_type": owner_type.strip().upper() if owner_type.strip().upper() in {"VENDOR", "COMPANY", "INDIVIDUAL"} else "VENDOR"})
+
+
+def _vendor_code_rows(content):
+    """Read the Code sheet used as the Vendor Master source."""
+    workbook = openpyxl.load_workbook(BytesIO(content), data_only=True, read_only=True)
+    if "Code" not in workbook.sheetnames:
+        return [], [{"row": 0, "column": "Sheet", "value": "Code",
+                     "message": "Workbook must contain a sheet named Code."}]
+    sheet = workbook["Code"]
+    rows = list(sheet.iter_rows(values_only=True))
+    expected = ("Company Id", "Legal Name", "Company", "Mobile", "Email",
+                "KYC", "Grade", "Status")
+    header = tuple(str(value).strip() if value is not None else "" for value in (rows[0] if rows else ()))
+    if header[:len(expected)] != expected:
+        return [], [{"row": 1, "column": "Header", "value": ", ".join(header),
+                     "message": "Code must use: " + ", ".join(expected)}]
+    parsed = []
+    errors = []
+    seen = set()
+    for number, values in enumerate(rows[1:], start=2):
+        values = list(values) + [None] * (len(expected) - len(values))
+        vendor_id = str(values[0]).strip() if values[0] is not None else ""
+        if not vendor_id:
+            continue
+        if vendor_id in seen:
+            errors.append({"row": number, "column": "Company Id", "value": vendor_id,
+                           "message": "Duplicate Company Id."})
+            continue
+        seen.add(vendor_id)
+        if not values[1] and not values[2]:
+            errors.append({"row": number, "column": "Legal Name", "value": "",
+                           "message": "Legal Name or Company is required."})
+            continue
+        parsed.append({
+            "vendor_id": vendor_id,
+            "vendor_name": str(values[1] or values[2]).strip(),
+            "company_name": str(values[2] or values[1]).strip(),
+            "mobile": values[3], "email": values[4], "kyc_status": values[5],
+            "grade": values[6], "status": values[7],
+        })
+    return parsed, errors
+
+
+@router.post("/vendors/import")
+async def vendor_master_import(request: Request, file: UploadFile = File(...)):
+    user = current_user(request)
+    if not user or not _master_access_allowed(user) or module_level(user, "Vendors") != "F":
+        return JSONResponse({"error": "not authorized"}, status_code=403)
+    rows, errors = _vendor_code_rows(await file.read())
+    if errors:
+        return RedirectResponse(url="/masters/vendors?msg=" + quote(errors[0]["message"]), status_code=303)
+    tenant_id = user.get("tenant_id") or "TEN-RENTA-GO"
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT vendor_id,status FROM vendors WHERE tenant_id=:1", (tenant_id,))
+        existing = {str(row[0]).strip(): row[1] for row in cur.fetchall()}
+        for row in rows:
+            status = row["status"] or existing.get(row["vendor_id"]) or "Active"
+            cur.execute(
+                "SELECT vendor_id FROM vendors WHERE tenant_id=:1 AND vendor_id=:2",
+                (tenant_id, row["vendor_id"]),
+            )
+            if cur.fetchone():
+                cur.execute(
+                    "UPDATE vendors SET vendor_name=:1,company_name=:2,mobile=:3,email=:4,"
+                    "kyc_status=:5,grade=:6,status=:7 WHERE tenant_id=:8 AND vendor_id=:9",
+                    (row["vendor_name"], row["company_name"], row["mobile"], row["email"],
+                     row["kyc_status"], row["grade"], status, tenant_id, row["vendor_id"]),
+                )
+            else:
+                cur.execute(
+                    "INSERT INTO vendors (vendor_id,tenant_id,vendor_name,company_name,mobile,email,"
+                    "kyc_status,grade,status) VALUES (:1,:2,:3,:4,:5,:6,:7,:8,:9)",
+                    (row["vendor_id"], tenant_id, row["vendor_name"], row["company_name"],
+                     row["mobile"], row["email"], row["kyc_status"], row["grade"], status),
+                )
+        audit(conn, user, "Vendor Master Imported", "VENDORS",
+              f"rows={len(rows)}; sheet=Code; file={file.filename}")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return RedirectResponse(url=f"/masters/vendors?msg={quote(f'Imported {len(rows)} Vendor Master rows from Code')}",
+                             status_code=303)
+
+
+@router.post("/ratecards/import")
+async def ratecard_import_submit(request: Request, file: UploadFile = File(...),
+                                 owner_type: str = Form("VENDOR"), owner_id: str = Form(""),
+                                 vendor_id: str = Form("")):
+    user = current_user(request)
+    if not user or not _master_access_allowed(user) or module_level(user, "Ratecards") != "F":
+        return JSONResponse({"error": "not authorized"}, status_code=403)
+    content = await file.read()
+    rows, errors = validate_workbook(content, file.filename or "", vendor_id or owner_id)
+    if owner_type.strip().upper() == "VENDOR" and not errors:
+        tenant_id = user.get("tenant_id") or "TEN-RENTA-GO"
+        vendor_ids = sorted({str(row.get("company_id") or "").strip() for row in rows if row.get("company_id")})
+        conn = get_connection(); cur = conn.cursor()
+        if vendor_ids:
+            marks = ",".join(f":{i + 2}" for i in range(len(vendor_ids)))
+            cur.execute(f"SELECT vendor_id FROM vendors WHERE tenant_id=:1 AND vendor_id IN ({marks})",
+                        (tenant_id,) + tuple(vendor_ids))
+            found = {str(row[0]).strip() for row in cur.fetchall()}
+            for missing in sorted(set(vendor_ids) - found):
+                errors.append({"row": 0, "column": "Company Id", "value": missing,
+                               "code": "INVALID_VENDOR", "message": "Vendor ID was not found in the tenant Vendor Master."})
+        conn.close()
+    if errors:
+        return templates.TemplateResponse("masters/ratecard_import.html",
+            {"request": request, "user": user, "message": "Import rejected", "errors": errors, "row_count": len(rows)})
+    tenant_id = user.get("tenant_id") or "TEN-RENTA-GO"
+    conn = get_connection()
+    try:
+        ids = import_rows(conn, rows, owner_type.strip().upper(), owner_id.strip() or None,
+                          tenant_id, vendor_id.strip() or None, file.filename or "")
+        audit(conn, user, "Rate Chart Imported", ids[0] if ids else "RATECARDS",
+              f"rows={len(ids)}; owner_type={owner_type.strip().upper()}; file={file.filename}")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return templates.TemplateResponse("masters/ratecard_import.html",
+        {"request": request, "user": user, "message": f"Imported {len(ids)} rows", "errors": [], "row_count": len(ids)})
 
 
 @router.get("/{key}")
@@ -453,6 +638,8 @@ def master_list(request: Request, key: str, q: str = "", page: int = 1):
     user = current_user(request)
     if not user:
         return RedirectResponse(url="/auth/login", status_code=303)
+    if not _master_access_allowed(user):
+        return RedirectResponse(url="/home?msg=access-denied", status_code=303)
     cfg = _cfg(key)
     if not cfg:
         return RedirectResponse(url="/masters", status_code=303)
@@ -469,7 +656,15 @@ def master_list(request: Request, key: str, q: str = "", page: int = 1):
         _sync_rentago_employees(conn)
         conn.commit()
 
-    cols = ", ".join(c for c, _ in cfg["list"])
+    selected_cols = [cfg["pk"]] + [c for c, _ in cfg["list"] if c != cfg["pk"]]
+    cols = ", ".join(selected_cols)
+    dropdown_options = {}
+    for dropdown_col in cfg.get("dropdown_filters") or []:
+        cur.execute(
+            f"SELECT DISTINCT {dropdown_col} FROM {cfg['table']} "
+            f"WHERE {dropdown_col} IS NOT NULL ORDER BY {dropdown_col}"
+        )
+        dropdown_options[dropdown_col] = [str(row[0]) for row in cur.fetchall()]
     # Quick search (q): OR across the configured search columns.
     # Per-field filters (f_<col>): AND-ed together, so any one field alone
     # works and several fields narrow the result further.
@@ -489,7 +684,24 @@ def master_list(request: Request, key: str, q: str = "", page: int = 1):
             params.append(f"%{val}%")
             conds.append(f"LOWER(NVL({fcol}, ' ')) LIKE LOWER(:{len(params)})")
         active_filters.append({"name": "f_" + fcol, "label": flabel,
-                               "value": val})
+                               "value": val,
+                               "options": dropdown_options.get(fcol, [])})
+    active_date_filters = []
+    for date_name, date_label in (cfg.get("date_filters") or []):
+        value = (request.query_params.get(date_name) or "").strip()
+        if value:
+            try:
+                datetime.strptime(value, "%Y-%m-%d")
+            except ValueError:
+                value = ""
+            else:
+                params.append(value)
+                if date_name == "from_date":
+                    conds.append(f"audit_date>=TO_DATE(:{len(params)},'YYYY-MM-DD')")
+                elif date_name == "to_date":
+                    conds.append(f"audit_date<TO_DATE(:{len(params)},'YYYY-MM-DD')+1")
+        active_date_filters.append({"name": date_name, "label": date_label,
+                                    "value": value})
     where = (" WHERE " + " AND ".join(conds)) if conds else ""
     cur.execute(f"SELECT COUNT(*) FROM {cfg['table']}{where}", params or None)
     total = int(cur.fetchone()[0])
@@ -509,12 +721,15 @@ def master_list(request: Request, key: str, q: str = "", page: int = 1):
     for f in active_filters:
         if f["value"]:
             qs_parts.append(f["name"] + "=" + quote(f["value"]))
+    for f in active_date_filters:
+        if f["value"]:
+            qs_parts.append(f["name"] + "=" + quote(f["value"]))
     qs = "&".join(qs_parts)
     return templates.TemplateResponse(
         "masters/list.html",
         {"request": request, "user": user,
-         "cfg": {"key": key, "title": cfg["title"], "list": cfg["list"],
-                 "filters": active_filters},
+         "cfg": {"key": key, "title": cfg["title"], "pk": cfg["pk"], "list": cfg["list"],
+                  "filters": active_filters, "date_filters": active_date_filters},
          "rows": rows, "query": q, "qs": qs, "page": page, "pages": pages,
          "total": total, "level": level},
     )
@@ -541,6 +756,8 @@ def master_new(request: Request, key: str):
     user = current_user(request)
     if not user:
         return RedirectResponse(url="/auth/login", status_code=303)
+    if not _master_access_allowed(user):
+        return RedirectResponse(url="/home?msg=access-denied", status_code=303)
     cfg = _cfg(key)
     if not cfg:
         return RedirectResponse(url="/masters", status_code=303)
@@ -569,6 +786,8 @@ async def master_create(request: Request, key: str):
     user = current_user(request)
     if not user:
         return RedirectResponse(url="/auth/login", status_code=303)
+    if not _master_access_allowed(user):
+        return RedirectResponse(url="/home?msg=access-denied", status_code=303)
     cfg = _cfg(key)
     if not cfg:
         return RedirectResponse(url="/masters", status_code=303)
@@ -578,6 +797,9 @@ async def master_create(request: Request, key: str):
     form = dict(await _form_pairs(request))
     values = _parse_form(cfg, form)
     values.update(cfg.get("defaults") or {})
+    if key == "company-ratecards":
+        values["owner_type"] = "COMPANY"
+        values["owner_id"] = values.get("company_id")
     missing_fields = [field["label"] for field in cfg["fields"] if field["required"] and not str(form.get(field["name"]) or "").strip()]
     if missing_fields:
         return RedirectResponse(url=f"/masters/{key}/new?msg=missing&fields={quote(', '.join(missing_fields))}", status_code=303)
@@ -645,6 +867,8 @@ def master_edit(request: Request, key: str, rec_id: str):
     user = current_user(request)
     if not user:
         return RedirectResponse(url="/auth/login", status_code=303)
+    if not _master_access_allowed(user):
+        return RedirectResponse(url="/home?msg=access-denied", status_code=303)
     cfg = _cfg(key)
     if not cfg:
         return RedirectResponse(url="/masters", status_code=303)
@@ -671,6 +895,8 @@ async def master_update(request: Request, key: str, rec_id: str):
     user = current_user(request)
     if not user:
         return RedirectResponse(url="/auth/login", status_code=303)
+    if not _master_access_allowed(user):
+        return RedirectResponse(url="/home?msg=access-denied", status_code=303)
     cfg = _cfg(key)
     if not cfg:
         return RedirectResponse(url="/masters", status_code=303)
@@ -682,6 +908,9 @@ async def master_update(request: Request, key: str, rec_id: str):
     form = dict(await _form_pairs(request))
     values = _parse_form(cfg, form)
     values.update(cfg.get("defaults") or {})
+    if key == "company-ratecards":
+        values["owner_type"] = "COMPANY"
+        values["owner_id"] = values.get("company_id")
     for field in cfg["fields"]:
         if field["required"] and not (str(form.get(field["name"]) or "").strip()):
             return RedirectResponse(
@@ -736,6 +965,8 @@ def roles_matrix(request: Request):
     user = current_user(request)
     if not user:
         return RedirectResponse(url="/auth/login", status_code=303)
+    if not _master_access_allowed(user):
+        return RedirectResponse(url="/home?msg=access-denied", status_code=303)
     if module_level(user, "Roles Matrix") != "F":
         return RedirectResponse(url="/home?msg=access-denied", status_code=303)
     sheets, role_codes = _matrix_axes()
@@ -760,6 +991,8 @@ async def roles_matrix_save(request: Request):
     user = current_user(request)
     if not user:
         return RedirectResponse(url="/auth/login", status_code=303)
+    if not _master_access_allowed(user):
+        return RedirectResponse(url="/home?msg=access-denied", status_code=303)
     if module_level(user, "Roles Matrix") != "F":
         return RedirectResponse(url="/home?msg=access-denied", status_code=303)
     form = dict(await _form_pairs(request))

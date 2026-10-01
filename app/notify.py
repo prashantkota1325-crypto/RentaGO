@@ -20,7 +20,16 @@ from .db import get_connection
 
 OPS_EMAIL = os.environ.get("RENTAGO_OPS_EMAIL", "info@rentago.co.in").strip()
 OPS_PHONE = os.environ.get("RENTAGO_OPS_PHONE", "").strip()
-BRAND_SIGNATURE = "\n\nRentaGO Technologies Pvt. Ltd."
+BRAND_SIGNATURE = (
+    "\n\nRentaGO Technologies Pvt. Ltd.\n"
+    "24 / 7 Customer Care No. 9923402200\n"
+    "Email: info@rentago.co.in"
+)
+BRAND_LOGO_URL = os.environ.get(
+    "RENTAGO_BRAND_LOGO_URL",
+    "https://app.rentago.co.in/static/img/icon-512.png",
+).strip()
+WHATSAPP_BRAND_HEADER = f"{BRAND_LOGO_URL}\nRentaGO Technologies Pvt. Ltd.\n\n"
 
 
 def _portal_role(user):
@@ -64,7 +73,8 @@ def _next_notification_id(cur):
     return "NTF-%06d" % (max_num + 1)
 
 
-def queue(conn, user, event, booking_id, recipients, subject, body):
+def queue(conn, user, event, booking_id, recipients, subject, body,
+          formatted_body=False, guest_trip_access_id=None):
     """Queue notifications for a list of recipients.
 
     recipients: list of dicts {name, email, phone, channels, role} where
@@ -75,7 +85,13 @@ def queue(conn, user, event, booking_id, recipients, subject, body):
     Returns the list of created ids. Returns [] (and never raises) on failure.
     """
     ids = []
-    body = body.rstrip() + BRAND_SIGNATURE
+    base_body = body.rstrip()
+    if formatted_body:
+        email_body = base_body
+        whatsapp_body = base_body
+    else:
+        email_body = base_body + BRAND_SIGNATURE + f"\n\nLogo: {BRAND_LOGO_URL}"
+        whatsapp_body = WHATSAPP_BRAND_HEADER + base_body + BRAND_SIGNATURE
     try:
         cur = conn.cursor()
         now = datetime.now()
@@ -84,33 +100,35 @@ def queue(conn, user, event, booking_id, recipients, subject, body):
             channels = r.get("channels") or ("email", "whatsapp")
             if "email" in channels and (r.get("email") or "").strip():
                 nid = _next_notification_id(cur)
-                link = _mailto(r["email"], subject, body)
+                link = _mailto(r["email"], subject, email_body)
                 cur.execute(
                     "INSERT INTO notifications (notification_id, tenant_id, event, channel, "
-                    "booking_id, recipient_name, recipient_email, recipient_phone, "
+                    "booking_id, guest_trip_access_id, recipient_name, recipient_email, recipient_phone, "
                     "subject, body, link, status, created_dt, created_by) VALUES "
-                    "(:1,:2,:3,'email',:4,:5,:6,:7,:8,:9,:10,'Queued',:11,:12)",
-                    (nid, (user or {}).get("tenant_id") or "TEN-RENTA-GO", ev, booking_id, r.get("name"), r.get("email"),
-                     r.get("phone"), subject[:500], body[:4000], link[:2000],
+                    "(:1,:2,:3,'email',:4,:5,:6,:7,:8,:9,:10,:11,'Queued',:12,:13)",
+                    (nid, (user or {}).get("tenant_id") or "TEN-RENTA-GO", ev, booking_id, guest_trip_access_id,
+                     r.get("name"), r.get("email"),
+                     r.get("phone"), subject[:500], email_body[:4000], link[:2000],
                       now, (user or {}).get("user_id")),
                 )
                 ids.append(nid)
             if "whatsapp" in channels and _wa_number(r.get("phone")):
                 nid = _next_notification_id(cur)
-                link = _wa_link(r.get("phone"), body)
+                link = _wa_link(r.get("phone"), whatsapp_body)
                 cur.execute(
                     "INSERT INTO notifications (notification_id, tenant_id, event, channel, "
-                    "booking_id, recipient_name, recipient_email, recipient_phone, "
+                    "booking_id, guest_trip_access_id, recipient_name, recipient_email, recipient_phone, "
                     "subject, body, link, status, created_dt, created_by) VALUES "
-                    "(:1,:2,:3,'whatsapp',:4,:5,:6,:7,:8,:9,:10,'Queued',:11,:12)",
-                    (nid, (user or {}).get("tenant_id") or "TEN-RENTA-GO", ev, booking_id, r.get("name"), r.get("email"),
-                     r.get("phone"), subject[:500], body[:4000], link[:2000],
+                    "(:1,:2,:3,'whatsapp',:4,:5,:6,:7,:8,:9,:10,:11,'Queued',:12,:13)",
+                    (nid, (user or {}).get("tenant_id") or "TEN-RENTA-GO", ev, booking_id, guest_trip_access_id,
+                     r.get("name"), r.get("email"),
+                     r.get("phone"), subject[:500], whatsapp_body[:4000], link[:2000],
                      now, (user or {}).get("user_id")),
                 )
                 ids.append(nid)
-    except Exception:
+    except Exception as exc:
         import traceback
-        print("[notify.queue] FAILED to queue notification:",
+        print(f"[notify.queue] FAILED to queue notification: {type(exc).__name__}: {exc}",
               file=sys.stderr, flush=True)
         traceback.print_exc()
     return ids
@@ -119,18 +137,15 @@ def queue(conn, user, event, booking_id, recipients, subject, body):
 # ---------------------------------------------------------------------------
 # Event composers (SOP 13.1 / 13.2)
 # ---------------------------------------------------------------------------
-def _step1_body(b):
+def _step1_body(b, user=None):
     bid = b.get("booking_id")
     body = (
         f"RentaGO Booking Request\n\n"
         f"Booking ID: {bid}\n"
         f"Type: {b.get('booking_type') or '-'}\n"
         f"Company: {b.get('company_name') or '-'}\n"
-        f"Guest: {b.get('guest_name_1') or '-'}\n"
-        f"Pickup: {b.get('pickup_address') or '-'} ({b.get('pickup_city') or '-'}) "
-        f"on {b.get('pickup_date') or '-'} at {b.get('pickup_time') or '-'}\n"
-        f"Drop: {b.get('drop_address') or '-'} ({b.get('drop_city') or '-'})\n"
-        f"Vehicle Type: {b.get('vehicle_type') or '-'}\n"
+        f"Guest: {b.get('guest_name_1') or '-'}\n\n"
+        + "\n".join(_booking_update_details(b, user)) + "\n"
         + (f"Flight Details: {b.get('flight_details')}\n" if b.get("flight_details") else "")
         + "\nStatus: Pending - Vehicle & Driver Allocation Pending."
     )
@@ -143,7 +158,7 @@ def notify_step1(conn, user, b):
     """Step 1 submitted: email to Guest + Booking SPOC, WhatsApp to Guest."""
     bid = b.get("booking_id")
     subject = f"RentaGO Booking Request {bid}"
-    body = _step1_body(b)
+    body = _step1_body(b, user)
     recipients = []
     if b.get("guest_email") or b.get("guest_contact"):
         recipients.append({"name": b.get("guest_name_1"), "email": b.get("guest_email"),
@@ -157,6 +172,23 @@ def notify_step1(conn, user, b):
                            "phone": OPS_PHONE, "channels": ("email", "whatsapp"),
                            "role": "Operations"})
     return queue(conn, user, "step1", bid, recipients, subject, body)
+
+
+def notify_pickup_not_started(conn, user, b, reason):
+    bid = b.get("booking_id")
+    subject = f"RentaGO RED FLAG - Pickup Passed {bid}"
+    body = (f"RED FLAG: Pickup time passed but trip has not started.\n\n"
+            f"Booking ID: {bid}\nGuest: {b.get('guest_name_1') or '-'}\n"
+            f"Pickup: {b.get('pickup_date') or '-'} {b.get('pickup_time') or '-'}\n"
+            f"Reason: {reason}{BRAND_SIGNATURE}")
+    recipients = []
+    if b.get("guest_email") or b.get("guest_contact"):
+        recipients.append({"name": b.get("guest_name_1"), "email": b.get("guest_email"),
+                           "phone": b.get("guest_contact"), "role": "Guest"})
+    if b.get("admin_email") or b.get("admin_contact"):
+        recipients.append({"name": b.get("admin_name"), "email": b.get("admin_email"),
+                           "phone": b.get("admin_contact"), "role": "Admin"})
+    return queue(conn, user, "pickup-not-started-red-flag", bid, recipients, subject, body)
 
 
 def notify_tracking_shared(conn, user, b, who, link):
@@ -295,24 +327,76 @@ def notify_step2(conn, user, b):
     """Step 2: vendor assignment notification to the vendor."""
     bid = b.get("booking_id")
     subject = f"RentaGO Vendor Assignment {bid}"
+    pickup_date = _notification_date(b.get("pickup_date"))
+    drop_date = _notification_date(b.get("drop_date"))
+    pickup_time = b.get("pickup_time") or "-"
     body = (
-        f"RentaGO Vendor Assignment\n\n"
-        f"Booking ID: {bid}\n"
-        f"Vendor: {b.get('vendor_name') or '-'}\n"
-        f"Package: {b.get('vendor_pkg_type') or '-'}\n"
-        f"Guest: {b.get('guest_name_1') or '-'}\n"
-        f"Pickup: {b.get('pickup_address') or '-'} on {b.get('pickup_date') or '-'} "
-        f"at {b.get('pickup_time') or '-'}\n"
-        f"Drop: {b.get('drop_address') or '-'}\n"
-        f"Vehicle Type: {b.get('vehicle_type') or '-'}\n"
-        f"Flight Details: {b.get('flight_details') or '-'}\n\n"
-        f"Please provide vehicle & driver details before the allocation deadline."
+        "🚗 *RentaGO Technologies Pvt. Ltd.*\n"
+        "*VENDOR ASSIGNMENT*\n\n"
+        f"*Booking:* {bid}\n"
+        f"*Vendor:* {b.get('vendor_name') or '-'}\n"
+        f"*Guest:* {b.get('guest_name_1') or '-'}\n"
+        f"*Package:* {b.get('vendor_pkg_type') or b.get('package_type') or '-'}\n\n"
+        "📍 *PICKUP*\n"
+        f"{b.get('pickup_address') or '-'}\n"
+        f"*{pickup_date} | {pickup_time}*\n\n"
+        "📍 *DROP*\n"
+        f"{b.get('drop_address') or '-'}\n"
+        f"*{drop_date}*\n\n"
+        f"🚘 *Vehicle:* {b.get('vehicle_type') or '-'}\n"
+        f"📏 *Approx. KM:* {_notification_km(b.get('planned_kms'))}\n"
+        f"⏱️ *Approx. Time:* {_notification_duration(b.get('planned_hrs'))}\n\n"
+        f"*Driver:* {b.get('driver_name') or 'Not Assigned'}\n"
+        f"*Driver Contact:* {b.get('driver_contact') or 'Not Assigned'}\n\n"
+        "⚠️ *ACTION REQUIRED*\n"
+        "Please provide vehicle & driver details before the allocation deadline.\n\n"
+        "_Note: KM & time are approximate. Actual KM & time may vary at the end of the trip._\n\n"
+        "*RentaGO Technologies Pvt. Ltd.*\n"
+        "24×7: 9923402200\n"
+        "Email: info@rentago.co.in"
     )
-    if b.get("driver_reporting_time"):
-        body += f"\nDriver Reporting Time: {b.get('driver_reporting_time')}"
     recipients = [{"name": b.get("vendor_name"), "email": b.get("vendor_email"),
                    "phone": b.get("vendor_contact"), "role": "Vendor"}]
-    return queue(conn, user, "step2", bid, recipients, subject, body)
+    return queue(conn, user, "step2", bid, recipients, subject, body,
+                 formatted_body=True)
+
+
+def _notification_date(value):
+    if not value:
+        return "-"
+    if hasattr(value, "strftime"):
+        return value.strftime("%d-%b-%Y").upper()
+    text = str(value).strip()
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d-%b-%Y", "%d-%b-%y"):
+        try:
+            return datetime.strptime(text, fmt).strftime("%d-%b-%Y").upper()
+        except ValueError:
+            continue
+    return text
+
+
+def _notification_km(value):
+    if value in (None, ""):
+        return "-"
+    try:
+        number = float(value)
+        return str(int(number)) if number.is_integer() else f"{number:g}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _notification_duration(value):
+    if value in (None, ""):
+        return "-"
+    text = str(value).strip()
+    if "hr" in text.lower() or "min" in text.lower():
+        return text
+    try:
+        total_minutes = max(0, round(float(value) * 60))
+    except (TypeError, ValueError):
+        return text
+    hours, minutes = divmod(total_minutes, 60)
+    return f"{hours} Hrs {minutes:02d} Min"
 
 
 def _route_link(b):
@@ -321,6 +405,30 @@ def _route_link(b):
         _q((b.get("pickup_address") or "").strip()),
         _q((b.get("drop_address") or "").strip()),
     )
+
+
+def _booking_update_details(b, user=None):
+    """Return the operational booking fields as separate notification lines."""
+    return [
+        f"Pickup Address: {b.get('pickup_address') or '-'}",
+        f"From City Name: {b.get('pickup_city') or '-'}",
+        f"Pickup Date: {b.get('pickup_date') or '-'}",
+        f"Pickup Time: {b.get('pickup_time') or '-'}",
+        f"Drop Address: {b.get('drop_address') or '-'}",
+        f"Drop City Name: {b.get('drop_city') or '-'}",
+        f"Drop Date: {b.get('drop_date') or '-'}",
+        f"Vehicle Type: {b.get('vehicle_type') or '-'}",
+        f"Package Type: {b.get('package_type') or b.get('vendor_pkg_type') or '-'}",
+        f"Planned Trip KM (Approx): {b.get('planned_kms') or '-'}",
+        f"Planned Trip Time (Approx): {b.get('planned_hrs') or '-'}",
+        "Note: The KM & time mentioned above are approximate and are given for reference only. Actual KM & time may vary at the end of the trip.",
+        f"Driver Name: {b.get('driver_name') or '-'}",
+        f"Driver Contact No: {b.get('driver_contact') or '-'}",
+        f"User Name: {(user or {}).get('name') or b.get('user_name') or '-'}",
+        f"Booked By: {b.get('done_by_booking') or (user or {}).get('user_id') or '-'}",
+        f"Booking Confirmed By: {b.get('done_by_driver') or '-'}",
+        f"Tracked By: {b.get('tracked_by') or '-'}",
+    ]
 
 
 def notify_step3(conn, user, b):
@@ -339,6 +447,10 @@ def notify_step3(conn, user, b):
         f"Drop: {b.get('drop_address') or '-'}\n"
         f"Route: {_route_link(b)}\n\n"
         f"Status: Booking Confirmed - Driver & Vehicle Allocated."
+        f"\n\n" + "\n".join(_booking_update_details(
+            dict(b, done_by_driver=b.get("done_by_driver") or (user or {}).get("user_id")),
+            user,
+        ))
     )
     recipients = []
     if b.get("guest_email") or b.get("guest_contact"):
@@ -363,6 +475,7 @@ def notify_step3(conn, user, b):
     driver_body = (
         f"RentaGO Trip Assignment\n\n"
         f"Booking ID: {bid}\n"
+        f"Guest: {b.get('guest_name_1') or '-'}\n"
         f"Driver: {b.get('driver_name') or '-'}\n"
         f"Vehicle: {b.get('vehicle_no') or '-'}\n"
         f"Reporting Time: {b.get('driver_reporting_time') or '-'}\n"
@@ -374,9 +487,59 @@ def notify_step3(conn, user, b):
     )
     ids += queue(conn, user, "step3", bid,
                  [{"name": b.get("driver_name"), "email": "",
-                   "phone": b.get("driver_contact"), "channels": ("whatsapp",),
-                   "role": "Driver"}],
+                    "phone": b.get("driver_contact"), "channels": ("whatsapp",),
+                    "role": "Driver"}],
                  f"RentaGO Trip {bid}", driver_body)
+
+    # Step 3 is the first point where both role identities and the booking
+    # assignment are complete, so issue the contextual app links here.
+    from .universal_access import create_access
+    cur = conn.cursor()
+    guest_user_id = None
+    driver_user_id = None
+    driver_id = None
+    cur.execute("SELECT user_id FROM users WHERE UPPER(emp_id)=UPPER(:1) AND LOWER(role)='guest' FETCH FIRST 1 ROWS ONLY",
+                (b.get("emp_guest_id"),))
+    guest_row = cur.fetchone()
+    if guest_row:
+        guest_user_id = guest_row[0]
+    cur.execute(
+        "SELECT d.driver_id,u.user_id FROM drivers d JOIN users u ON UPPER(u.emp_id)=UPPER(d.driver_id) "
+        "WHERE d.tenant_id=:1 AND (UPPER(TRIM(d.driver_name))=UPPER(TRIM(:2)) OR d.mobile=:3) "
+        "FETCH FIRST 1 ROWS ONLY",
+        (b.get("tenant_id"), b.get("driver_name"), b.get("driver_contact")),
+    )
+    driver_row = cur.fetchone()
+    if driver_row:
+        driver_id, driver_user_id = driver_row
+    access_recipients = []
+    if guest_user_id and (b.get("guest_email") or b.get("guest_contact")):
+        _, guest_token, _ = create_access(
+            conn, role="guest", user_id=guest_user_id, tenant_id=b.get("tenant_id"),
+            booking_id=bid, created_by=(user or {}).get("user_id"), destination="guest",
+        )
+        access_recipients.append({"name": b.get("guest_name_1"), "email": b.get("guest_email"),
+                                  "phone": b.get("guest_contact"), "channels": ("email", "whatsapp"),
+                                  "role": "Guest", "secure_token": guest_token})
+    if driver_user_id and b.get("driver_contact"):
+        _, driver_token, _ = create_access(
+            conn, role="driver", user_id=driver_user_id, driver_id=driver_id,
+            tenant_id=b.get("tenant_id"), booking_id=bid,
+            created_by=(user or {}).get("user_id"), destination="driver",
+        )
+        access_recipients.append({"name": b.get("driver_name"), "email": "",
+                                  "phone": b.get("driver_contact"), "channels": ("whatsapp",),
+                                  "role": "Driver", "secure_token": driver_token})
+    for recipient in access_recipients:
+        secure_token = recipient.pop("secure_token")
+        access_body = (
+            f"RentaGO Secure Access\n\nBooking ID: {bid}\n\n"
+            f"Secure Token:\n{secure_token}\n\n"
+            "Open the RentaGO Access page and enter this token. "
+            "Do not forward it. It expires and is tied to your authorized trip context."
+        )
+        ids += queue(conn, user, "universal-access", bid, [recipient],
+                     f"RentaGO Secure Access {bid}", access_body, formatted_body=True)
     return ids
 
 
@@ -527,21 +690,25 @@ def notify_modification(conn, user, b, changes, section="Booking Details",
         if len(changes) > 15:
             lines.append(f"  ...and {len(changes) - 15} more change(s)")
         lines.append("")
+    details = _booking_update_details(b, user)
+    if section == "Driver & Vehicle (Step 3)":
+        details = [line for line in details if not line.startswith((
+            "Vehicle Type:", "Driver Name:", "Driver Contact No:"))]
+        details += [
+            "",
+            "Driver Details:",
+            f"Driver Name: {b.get('driver_name') or '-'}",
+            f"Driver Contact No: {b.get('driver_contact') or '-'}",
+            "",
+            "Vehicle Details:",
+            f"Vehicle Type: {b.get('vehicle_type') or '-'}",
+            f"Vehicle No: {b.get('vehicle_no') or '-'}",
+            f"Driver Reporting Time: {b.get('driver_reporting_time') or '-'}",
+        ]
     lines += [
         "Current booking summary:",
-        f"Pickup: {b.get('pickup_address') or '-'} ({b.get('pickup_city') or '-'}) "
-        f"on {b.get('pickup_date') or '-'} at {b.get('pickup_time') or '-'}",
-        f"Drop: {b.get('drop_address') or '-'} ({b.get('drop_city') or '-'})",
-        f"Vehicle Type: {b.get('vehicle_type') or '-'}",
-        f"Package: {b.get('package_type') or '-'}",
+        *details,
     ]
-    if b.get("vendor_name"):
-        lines.append(f"Vendor: {b.get('vendor_name')} "
-                     f"({b.get('vendor_pkg_type') or '-'})")
-    if b.get("driver_name"):
-        lines.append(f"Driver: {b.get('driver_name')} ({b.get('driver_contact') or '-'})")
-        lines.append(f"Vehicle No: {b.get('vehicle_no') or '-'}")
-        lines.append(f"Driver Reporting Time: {b.get('driver_reporting_time') or '-'}")
     body = "\n".join(lines)
 
     recipients = []
@@ -560,6 +727,7 @@ def notify_modification(conn, user, b, changes, section="Booking Details",
         driver_body = (
             f"RentaGO Trip Assignment (UPDATED)\n\n"
             f"Booking ID: {bid}\n"
+            f"Guest: {b.get('guest_name_1') or '-'}\n"
             f"Driver: {b.get('driver_name') or '-'}\n"
             f"Vehicle: {b.get('vehicle_no') or '-'}\n"
             f"Reporting Time: {b.get('driver_reporting_time') or '-'}\n"

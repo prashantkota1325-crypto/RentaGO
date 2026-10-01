@@ -80,9 +80,9 @@
       {% if t.pickup_start_km is not none %}<tr><td>Pickup Odometer (km)</td><td>{{ t.pickup_start_km }}</td></tr>{% endif %}
       {% if t.drop_end_km is not none %}<tr><td>Drop Odometer (km)</td><td>{{ t.drop_end_km }}</td></tr>{% endif %}
       {% if t.actual_kms is not none %}<tr><td>Actual Kms</td><td>{{ t.actual_kms }}</td></tr>{% endif %}
-      {% if t.actual_hrs is not none %}<tr><td>Actual Hours</td><td>{{ t.actual_hrs }}</td></tr>{% endif %}
+      {% if t.actual_hrs is not none %}<tr><td>Actual Hours</td><td>{{ t.actual_hrs|duration_words }}</td></tr>{% endif %}
       {% if t.extra_kms is not none %}<tr><td>Extra Kms</td><td>{{ t.extra_kms }}</td></tr>{% endif %}
-      {% if t.extra_hrs is not none %}<tr><td>Extra Hours</td><td>{{ t.extra_hrs }}</td></tr>{% endif %}
+      {% if t.extra_hrs is not none %}<tr><td>Extra Hours</td><td>{{ t.extra_hrs|duration_words }}</td></tr>{% endif %}
       {% if t.trip_id %}<tr><td>Trip ID</td><td>{{ t.trip_id }}</td></tr>{% endif %}
       {% if t.pickup_date %}<tr><td>Trip Start Date Time</td><td>{{ t.pickup_date }} {{ t.pickup_start_time or "" }}</td></tr>{% endif %}
       {% if t.drop_end_time %}<tr><td>Trip End Date Time</td><td>{{ t.drop_end_time }}</td></tr>{% endif %}

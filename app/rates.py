@@ -21,8 +21,9 @@ def customer_rate(company_id, vehicle_type) -> float:
     cur = conn.cursor()
     try:
         cur.execute(
-            "SELECT company_id, category, package_rate FROM ratecards "
-            "WHERE UPPER(category) LIKE UPPER(:1)",
+            "SELECT company_id, category, NVL(package_rate, price_1) FROM ratecards "
+            "WHERE UPPER(category) LIKE UPPER(:1) "
+            "AND (status IS NULL OR UPPER(status) IN ('ACTIVE','APPROVED'))",
             ("%" + vehicle_type + "%",),
         )
         rows = cur.fetchall()

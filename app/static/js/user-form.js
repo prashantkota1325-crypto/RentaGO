@@ -6,6 +6,7 @@
   var name = document.getElementById("user_name");
   var manual = document.getElementById("user_manual_name");
   var email = document.getElementById("user_email");
+  var identity = document.getElementById("user_identity_id");
   var mobile = document.querySelector('input[name="mobile"]');
   if (!company || !role || !name || !email) return;
 
@@ -32,6 +33,11 @@
       return;
     }
     if (!id) {
+      if ((role.value || "").trim().toLowerCase() === "driver") {
+        name.innerHTML = '<option value="__manual__" selected>Enter driver name</option>';
+        setManual(true);
+        return;
+      }
       name.innerHTML = '<option value="">Select a company first</option>' +
         '<option value="__manual__">Enter name manually</option>';
       return;
@@ -42,7 +48,12 @@
         name.innerHTML = '<option value="">Select a person</option>';
         items.forEach(function (p) {
           var o = document.createElement("option");
-          o.value = p.name; o.textContent = p.name + (p.email ? " - " + p.email : "");
+           o.value = p.name;
+           o.dataset.identityId = p.identity_id || "";
+           o.textContent = p.name +
+             (p.reference_id ? " (" + p.reference_id + ")" : "") +
+             (p.email ? " - " + p.email : "") +
+             (p.mobile ? " - " + p.mobile : "");
           o.dataset.email = p.email; o.dataset.mobile = p.mobile;
           name.appendChild(o);
         });
@@ -66,6 +77,7 @@
     setManual(manualChoice);
     if (!manualChoice && opt) {
       email.value = opt.dataset.email || "";
+      if (identity) identity.value = opt.dataset.identityId || "";
       if (mobile) mobile.value = opt.dataset.mobile || mobile.value;
     }
   });

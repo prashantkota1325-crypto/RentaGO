@@ -5,7 +5,8 @@ RBAC helpers (`module_access`, `module_level`) without each route having to
 pass them in the context.
 """
 
-from datetime import datetime
+from datetime import date, datetime, time
+import re
 
 from fastapi.templating import Jinja2Templates
 
@@ -41,6 +42,22 @@ def tenant_branding(user):
 
 templates.env.globals["tenant_branding"] = tenant_branding
 
+PRODUCT_BRANDING = {
+    "name": "RentaGO® CRM",
+    "creator": "Prashant Kota",
+    "attribution": "Designed & Built by Prashant Kota",
+    "company": "RentaGO Technologies Pvt. Ltd.",
+    "copyright": "© 2026 RentaGO Technologies Pvt. Ltd.",
+    "rights": "All Rights Reserved.",
+}
+
+
+def product_branding():
+    return PRODUCT_BRANDING
+
+
+templates.env.globals["product_branding"] = product_branding
+
 
 def iso_date(value):
     """Normalize a date value (Oracle string, legacy DD-MM-YYYY, date) to
@@ -62,6 +79,59 @@ def iso_date(value):
 
 
 templates.env.filters["iso_date"] = iso_date
+
+
+def display_date(value):
+    """Render booking dates consistently for users as DD-MM-YYYY."""
+    if not value:
+        return ""
+    if hasattr(value, "strftime"):
+        return value.strftime("%d-%m-%Y")
+    s = iso_date(value)
+    if not s:
+        return str(value)
+    return datetime.strptime(s, "%Y-%m-%d").strftime("%d-%m-%Y")
+
+
+templates.env.filters["display_date"] = display_date
+
+
+def display_time(value):
+    """Render time values consistently as HH:MM:SS."""
+    if not value:
+        return ""
+    if isinstance(value, datetime):
+        return value.strftime("%H:%M:%S")
+    if isinstance(value, time):
+        return value.strftime("%H:%M:%S")
+    text = str(value).strip()
+    for fmt in ("%H:%M:%S", "%H:%M", "%I:%M %p", "%I:%M:%S %p"):
+        try:
+            return datetime.strptime(text, fmt).strftime("%H:%M:%S")
+        except ValueError:
+            continue
+    return text
+
+
+templates.env.filters["display_time"] = display_time
+
+
+def system_display(value):
+    """Format database date/timestamp values when templates render them raw."""
+    if isinstance(value, datetime):
+        return value.strftime("%d-%m-%Y %H:%M:%S")
+    if isinstance(value, date):
+        return value.strftime("%d-%m-%Y")
+    text = str(value).strip() if isinstance(value, str) else None
+    if text and re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        return display_date(text)
+    if text and re.fullmatch(r"\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}", text):
+        parsed = datetime.strptime(text.replace("T", " "), "%Y-%m-%d %H:%M:%S")
+        return parsed.strftime("%d-%m-%Y %H:%M:%S")
+    return value
+
+
+templates.env.finalize = system_display
 
 
 def iso_dt(value):
@@ -112,3 +182,52 @@ def duration_hm(value):
 
 
 templates.env.filters["duration_hm"] = duration_hm
+
+
+def duration_words(value):
+    """Render decimal hours as an elapsed duration, not a decimal clock."""
+    try:
+        total_minutes = max(0, round(float(value or 0) * 60))
+    except (TypeError, ValueError):
+        return str(value or "")
+    hours, minutes = divmod(total_minutes, 60)
+    parts = []
+    if hours:
+        parts.append(f"{hours} hr" + ("s" if hours != 1 else ""))
+    if minutes or not parts:
+        parts.append(f"{minutes} min" + ("s" if minutes != 1 else ""))
+    return " ".join(parts)
+
+
+templates.env.filters["duration_words"] = duration_words
+
+
+def duration_clock_words(value):
+    """Render planned route H.MM values with minute carry (e.g. 3.70 -> 4 hrs 10 mins)."""
+    try:
+        raw = float(value or 0)
+        hours = int(raw)
+        minutes = round((raw - hours) * 100)
+        hours += minutes // 60
+        minutes %= 60
+    except (TypeError, ValueError):
+        return str(value or "")
+    parts = []
+    if hours:
+        parts.append(f"{hours} hr" + ("s" if hours != 1 else ""))
+    if minutes or not parts:
+        parts.append(f"{minutes} min" + ("s" if minutes != 1 else ""))
+    return " ".join(parts)
+
+
+templates.env.filters["duration_clock_words"] = duration_clock_words
+
+
+def meters_to_km(value):
+    try:
+        return f"{float(value) / 1000:.2f} km"
+    except (TypeError, ValueError):
+        return "-"
+
+
+templates.env.filters["meters_to_km"] = meters_to_km

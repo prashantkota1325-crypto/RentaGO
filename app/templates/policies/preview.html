@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}{{ policy.name }}{% endblock %}
+{% block content %}
+<div class="d-print-none d-flex justify-content-between align-items-center mb-3"><a href="/policies">&larr; Policies</a><button class="btn btn-primary" onclick="window.print()">Print / Save as PDF</button></div>
+<article class="policy-preview mx-auto">
+<header class="border-bottom pb-3 mb-4"><h1>{{ policy.name }}</h1><div class="text-muted">{{ policy.category }}{% if policy.department %} | {{ policy.department }}{% endif %} | Version {{ policy.version }} | {{ policy.status }}</div></header>
+{% if policy.content %}<p class="lead">{{ policy.content }}</p>{% endif %}
+{% for section in policy.sections %}{% if section.visible is not defined or section.visible %}<section class="mb-4"><h2>{{ loop.index }}. {{ section.title }}</h2><div style="white-space:pre-wrap">{{ section.content }}</div></section>{% endif %}{% endfor %}
+{% if not policy.content and not policy.sections %}<p class="text-muted">No policy content has been entered.</p>{% endif %}
+<footer class="border-top pt-3 mt-5 text-muted small">Generated from RentaGO Policy Generator | Change reason: {{ policy.change_reason or 'Initial draft' }}</footer>
+</article>
+<style>@media print{.policy-preview{max-width:190mm}.policy-preview h1{font-size:24pt}.policy-preview h2{font-size:14pt}body{background:#fff!important}}</style>
+{% endblock %}

@@ -32,7 +32,8 @@ def main():
     if not admin_pwd:
         raise RuntimeError("RENTAGO_ADMIN_PASSWORD must be configured before database setup.")
 
-    oracledb.init_oracle_client(lib_dir=os.environ.get("RENTAGO_ORACLE_CLIENT"))
+    if os.environ.get("RENTAGO_ORACLE_CLIENT"):
+        oracledb.init_oracle_client(lib_dir=os.environ.get("RENTAGO_ORACLE_CLIENT"))
     print(f"Connecting as {admin_user} to {settings.admin_dsn} ...")
     conn = oracledb.connect(user=admin_user, password=admin_pwd, dsn=settings.admin_dsn)
     cur = conn.cursor()
@@ -55,8 +56,13 @@ def main():
     print(f"Running {SCHEMA_FILE.name} as {APP_USER} ...")
     app_conn = oracledb.connect(user=APP_USER, password=APP_PWD, dsn=settings.dsn)
     script_cur = app_conn.cursor()
-    # Execute statements split on ';' (handles simple DDL/DML; no PL/SQL blocks expected yet)
-    stmts = [s.strip() for s in sql.replace("\n", " ").split(";") if s.strip()]
+    # Preserve line boundaries so SQL*Plus-style -- comments cannot swallow
+    # the following DDL when the schema is executed through the native driver.
+    sql_without_comments = "\n".join(
+        line for line in sql.splitlines()
+        if not line.strip().startswith("--")
+    )
+    stmts = [s.strip() for s in sql_without_comments.split(";") if s.strip()]
     for stmt in stmts:
         try:
             script_cur.execute(stmt)

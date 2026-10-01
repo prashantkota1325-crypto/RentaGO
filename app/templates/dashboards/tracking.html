@@ -39,7 +39,7 @@ green = on track / synced, red = GPS red flag (&gt; 100 m between driver &amp; g
     <td>{{ t.company }}</td>
     <td>{{ t.guest }}</td>
     <td>{{ t.guest_contact or '-' }}</td>
-    <td>{{ t.pickup_date }} {{ t.pickup_time }}</td>
+    <td>{{ t.pickup_date|display_date }} {{ t.pickup_time|display_time }}</td>
     <td>{{ t.drop }}</td>
     <td>{{ t.driver or '-' }}{% if t.driver_contact %} <span class="text-muted small">({{ t.driver_contact }})</span>{% endif %}</td>
     <td>{{ t.vehicle or '-' }}</td>

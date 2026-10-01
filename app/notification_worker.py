@@ -7,6 +7,7 @@ from email.mime.text import MIMEText
 from email.utils import formataddr
 
 from .config import settings
+from .emailer import build_email_message
 from .db import get_connection
 
 log = logging.getLogger("rentago.notifications")
@@ -16,10 +17,10 @@ MAX_ATTEMPTS = 5
 def _send_email(row):
     if not settings.SMTP_USER or not settings.SMTP_PASSWORD:
         raise RuntimeError("SMTP credentials are not configured")
-    message = MIMEText(row[7] or "", "plain", "utf-8")
-    message["Subject"] = row[6] or "RentaGO Notification"
-    message["From"] = formataddr((settings.SMTP_FROM_NAME, settings.SMTP_USER))
-    message["To"] = row[2]
+    message = build_email_message(
+        row[2], row[6] or "RentaGO Notification", row[7] or "",
+        append_signature=False,
+    )
     if settings.SMTP_SECURITY == "starttls":
         with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=20) as server:
             server.starttls()
@@ -48,7 +49,8 @@ def deliver_once():
                     if not email:
                         raise RuntimeError("Recipient email is empty")
                     _send_email(row)
-                    status, error = "Sent", None
+                    # SMTP acceptance is submission, not inbox delivery.
+                    status, error = "Submitted", None
                 elif channel == "whatsapp":
                     status, error = "Manual", "WhatsApp provider is not configured; use the stored wa.me link"
                 else:
@@ -59,7 +61,7 @@ def deliver_once():
                 "UPDATE notifications SET status=:1, attempts=:2, last_attempt=SYSDATE, error_message=:3 WHERE notification_id=:4",
                 (status, attempts + 1, error, nid),
             )
-            if status == "Sent":
+            if status in {"Submitted", "Sent"}:
                 delivered += 1
         conn.commit()
         return delivered

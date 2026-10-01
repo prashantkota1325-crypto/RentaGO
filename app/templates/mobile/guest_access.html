@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}RentaGO Guest Trip Access{% endblock %}
+{% block content %}
+<div class="container mt-4" style="max-width:720px">
+  {% if error %}<div class="alert alert-danger"><h4>Guest Trip Access unavailable</h4><p class="mb-0">{{ error }}</p></div>
+  {% elif booking %}
+  <div class="card shadow-sm"><div class="card-body">
+    <div class="small text-muted">RentaGO Secure Guest Trip Access</div>
+    <h2>{{ booking.booking_id }}</h2>
+    <dl class="row"><dt class="col-5">Trip Status</dt><dd class="col-7">{{ booking.status_reason or booking.booking_status or '-' }}</dd><dt class="col-5">Driver</dt><dd class="col-7">{{ booking.driver_name or '-' }}</dd><dt class="col-5">Vehicle</dt><dd class="col-7">{{ booking.vehicle_no or '-' }}</dd><dt class="col-5">Pickup</dt><dd class="col-7">{{ booking.pickup_address or '-' }}</dd><dt class="col-5">Drop</dt><dd class="col-7">{{ booking.drop_address or '-' }}</dd></dl>
+    <div class="alert alert-info mb-3">This secure Guest view is scoped to this trip. No Driver QR pairing is used.</div>
+    {% if booking.status_reason == 'Trip Completed' %}
+    <form method="post" action="/guest/trip/feedback" class="border rounded p-3 mb-3"><h5>Guest Feedback</h5><select name="rating" class="form-select mb-2" required><option value="">Rating</option>{% for n in range(1,6) %}<option value="{{ n }}">{{ n }} / 5</option>{% endfor %}</select><textarea name="feedback" class="form-control mb-2" placeholder="Feedback"></textarea><select name="safety_status" class="form-select mb-2" required><option value="">Safety feedback</option><option>Yes</option><option>Some concern</option><option>Safety issue</option></select><textarea name="safety_issues" class="form-control mb-2" placeholder="Safety details (optional)"></textarea><button class="btn btn-success">Submit Feedback</button></form>
+    <form method="post" action="/guest/trip/signature"><button class="btn btn-primary">Guest Signature</button></form>
+    {% endif %}
+  </div></div>
+  {% else %}<div class="alert alert-warning">Trip not available.</div>{% endif %}
+</div>
+{% endblock %}

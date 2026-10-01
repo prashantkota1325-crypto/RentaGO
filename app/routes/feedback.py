@@ -5,18 +5,20 @@ from datetime import datetime
 from fastapi import APIRouter, Request, Form
 from fastapi.responses import RedirectResponse
 
-from ..auth import current_user, module_level
+from ..auth import current_user, module_level, FEEDBACK_EXTERNAL_ROLES
 from ..db import get_connection
 from ..templating import templates
 from ..audit import audit
 from ..sla_engine import complete_for_entity
+from ..scope import visible_booking_ids, can_view
 
 router = APIRouter(prefix="/feedback")
 FEEDBACK_STATUSES = ("Open", "Under Review", "Action Required", "Rectified", "Closed")
 
 
 def _allowed(user):
-    return bool(user) and module_level(user, "Feedback") is not None
+    role = (user or {}).get("role", "").strip().lower()
+    return bool(user) and role not in FEEDBACK_EXTERNAL_ROLES and module_level(user, "Feedback") is not None
 
 
 @router.get("")
@@ -27,6 +29,7 @@ def feedback_list(request: Request, status: str = "", q: str = "",
         return RedirectResponse(url="/home?msg=access-denied", status_code=303)
     conn = get_connection()
     cur = conn.cursor()
+    visible = visible_booking_ids(user, cur)
     sql = (
         "SELECT t.trip_id, t.booking_id, b.guest_name_1, b.company_name, "
         "b.vendor_name, b.driver_name, t.guest_rating, t.guest_feedback, "
@@ -55,6 +58,7 @@ def feedback_list(request: Request, status: str = "", q: str = "",
     sql += " ORDER BY t.trip_id DESC FETCH FIRST 500 ROWS ONLY"
     cur.execute(sql, params or None)
     rows = cur.fetchall()
+    rows = [r for r in rows if can_view(visible, str(r[1] or ""))]
     conn.close()
     feedback = [dict(zip(("trip_id", "booking_id", "guest", "company", "vendor",
                           "driver", "rating", "comments", "went_well", "improvements",
@@ -85,6 +89,10 @@ def update_feedback(request: Request, trip_id: str, status: str = Form("Open"),
     cur = conn.cursor()
     cur.execute("SELECT booking_id FROM trips WHERE trip_id=:1", (trip_id,))
     booking_row = cur.fetchone()
+    visible = visible_booking_ids(user, cur)
+    if not booking_row or not can_view(visible, str(booking_row[0] or "")):
+        conn.close()
+        return RedirectResponse(url="/feedback?msg=not-allowed", status_code=303)
     cur.execute(
         "UPDATE trips SET feedback_status=:1, feedback_owner=:2, feedback_action=:3, "
         "feedback_followup_date=:4, feedback_closed_on=:5, feedback_owner_group=:6 "

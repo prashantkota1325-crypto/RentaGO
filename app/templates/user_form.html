@@ -6,7 +6,7 @@
 
 {% if msg %}
 <div class="alert alert-warning alert-dismissible fade show" role="alert">
-  {% if msg == 'missing' %}Please fill in all required fields.{% elif msg == 'password-mismatch' %}
+  {% if msg == 'missing' %}Please fill in all required fields.{% elif msg == 'mobile-pin-reset' %}Mobile PIN reset successfully.{% elif msg == 'mobile-pin-mismatch' %}Mobile PIN entries do not match.{% elif msg == 'mobile-pin-invalid' %}Mobile PIN must contain exactly 4 digits.{% elif msg == 'mobile-pin-not-allowed' %}You are not authorized to reset this Guest PIN.{% elif msg == 'password-mismatch' %}
   Passwords do not match.{% elif msg == 'password-short' %}Password must be at least 6 characters.
   {% elif msg == 'exists' %}That User ID is already taken.{% elif msg == 'error' %}
   Could not save — please check the values and retry.{% else %}{{ msg }}{% endif %}
@@ -41,14 +41,15 @@
              placeholder="Enter name" style="display:none">
     </div>
     <div class="col-md-4">
-      <label class="form-label">Email *</label>
-      <input name="email" id="user_email" type="email" class="form-control" required
+      <label class="form-label">Email <span id="user-email-required">*</span></label>
+      <input name="email" id="user_email" type="email" class="form-control"
              value="{{ rec.email or '' }}">
     </div>
     <div class="col-md-4">
       <label class="form-label">Mobile</label>
       <input name="mobile" class="form-control" value="{{ rec.mobile or '' }}">
     </div>
+    <input type="hidden" name="identity_id" id="user_identity_id" value="{{ rec.emp_id or '' }}">
     <div class="col-md-4">
       <label class="form-label">Company</label>
       <select name="company_name" id="user_company" class="form-select"
@@ -57,15 +58,15 @@
         <option value="__new_individual__" data-org-id="__new__" data-kind="individual">+ New Individual Guest</option>
         {% for c in companies or [] %}
         <option value="{{ c.name }}" data-org-id="{{ c.id }}" data-kind="corporate"
-          {% if rec.company_name == c.name %}selected{% endif %}>{{ c.name }}</option>
+          {% if rec.company_name == c.name %}selected{% endif %}>{{ c.name }} ({{ c.id }})</option>
         {% endfor %}
         {% for v in vendors or [] %}
         <option value="{{ v.name }}" data-org-id="{{ v.id }}" data-kind="vendor"
-          {% if rec.company_name == v.name %}selected{% endif %}>{{ v.name }} (Vendor)</option>
+          {% if rec.company_name == v.name %}selected{% endif %}>{{ v.name }} ({{ v.id }}) (Vendor)</option>
         {% endfor %}
         {% for i in individuals or [] %}
         <option value="{{ i.name }}" data-org-id="{{ i.id }}" data-kind="individual"
-          {% if rec.company_name == i.name %}selected{% endif %}>Individual Guest: {{ i.name }}</option>
+          {% if rec.emp_id|string == i.id|string %}selected{% endif %}>Individual Guest: {{ i.name }} ({{ i.id }})</option>
         {% endfor %}
       </select>
     </div>
@@ -106,5 +107,45 @@
     <a class="btn btn-outline-secondary" href="/auth/users">Cancel</a>
   </div>
 </form>
+{% if rec_id and (rec.role or '')|lower == 'guest' %}
+<div class="card mt-3 border-warning">
+  <div class="card-body">
+    <h5 class="card-title">Guest Mobile Login PIN</h5>
+    <p class="text-muted small">Reset the Guest's mobile login PIN. The existing PIN is never displayed.</p>
+    <form method="post" action="/auth/users/{{ rec_id }}/reset-mobile-pin"
+          onsubmit="return confirm('Reset the Mobile Login PIN for this Guest?');">
+      <div class="row g-3 align-items-end">
+        <div class="col-md-4">
+          <label class="form-label">New Mobile PIN</label>
+          <input name="new_mobile_pin" type="password" inputmode="numeric" pattern="[0-9]{4}"
+                 minlength="4" maxlength="4" autocomplete="new-password" class="form-control" required>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Confirm Mobile PIN</label>
+          <input name="confirm_mobile_pin" type="password" inputmode="numeric" pattern="[0-9]{4}"
+                 minlength="4" maxlength="4" autocomplete="new-password" class="form-control" required>
+        </div>
+        <div class="col-md-4">
+          <button class="btn btn-warning" type="submit">Reset Mobile PIN</button>
+        </div>
+      </div>
+      <div class="form-text">PIN must contain exactly 4 digits. The new PIN is not shown after saving.</div>
+    </form>
+  </div>
+</div>
+{% endif %}
+<script>
+  const userRoleField = document.getElementById("user_role");
+  const userEmailField = document.getElementById("user_email");
+  const userEmailRequired = document.getElementById("user-email-required");
+  function updateUserEmailRequirement() {
+    const isDriver = userRoleField.value.trim().toLowerCase() === "driver";
+    userEmailField.required = !isDriver;
+    userEmailRequired.textContent = isDriver ? "" : "*";
+    userEmailField.placeholder = isDriver ? "Optional for Driver accounts" : "Required";
+  }
+  userRoleField.addEventListener("change", updateUserEmailRequirement);
+  updateUserEmailRequirement();
+</script>
 <script src="/static/js/user-form.js"></script>
 {% endblock %}

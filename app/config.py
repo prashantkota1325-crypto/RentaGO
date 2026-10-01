@@ -78,6 +78,8 @@ class Settings:
     GOOGLE_MAPS_API_KEY: str = _env("RENTAGO_GOOGLE_MAPS_API_KEY", "").strip()
     MAP_PROVIDER: str = _env("RENTAGO_MAP_PROVIDER", "google").strip().lower()
     MAPPLS_API_KEY: str = _env("RENTAGO_MAPPLS_API_KEY", "").strip()
+    GPS_MAX_SPEED_MPS: float = float(_env("RENTAGO_GPS_MAX_SPEED_MPS", "90"))
+    GPS_STALE_SECONDS: int = int(_env("RENTAGO_GPS_STALE_SECONDS", "120"))
     SMTP_HOST: str = _env("RENTAGO_SMTP_HOST", "smtpout.secureserver.net").strip()
     SMTP_PORT: int = int(_env("RENTAGO_SMTP_PORT", "465"))
     SMTP_SECURITY: str = _env("RENTAGO_SMTP_SECURITY", "ssl").strip().lower()

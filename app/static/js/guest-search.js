@@ -47,7 +47,11 @@
   }
 
   function fetchGuests(input, list, q) {
-    fetch("/bookings/guests?q=" + encodeURIComponent(q))
+    var form = input.closest("form");
+    var typeField = form && form.querySelector('[name="booking_type"]');
+    var bookingType = typeField ? typeField.value : "";
+    fetch("/bookings/guests?q=" + encodeURIComponent(q) +
+      "&booking_type=" + encodeURIComponent(bookingType))
       .then(function (r) { return r.json(); })
       .then(function (items) {
         list.innerHTML = "";
@@ -61,6 +65,8 @@
           a.className = "list-group-item list-group-item-action text-start";
           a.innerHTML = "<b>" + escapeHtml(g.guest_name) + "</b>" +
             (g.company ? " &mdash; " + escapeHtml(g.company) : "") +
+            (g.company_id ? " <span class='text-muted'>(" + escapeHtml(g.company_id) + ")</span>" : "") +
+            (g.identity_id ? " <span class='text-muted'>Identity: " + escapeHtml(g.identity_id) + "</span>" : "") +
             (g.code ? " <span class='text-muted'>(" + escapeHtml(g.code) + ")</span>" : "") +
             "<span class='badge bg-light text-dark float-end'>" + g.source + "</span>";
           a.addEventListener("mousedown", function (e) { e.preventDefault(); });
@@ -80,7 +86,7 @@
       set(form, "company_name", g.company);
       set(form, "entity_name", g.entity);
       set(form, "company_id", g.company_id);
-      set(form, "emp_guest_id", g.code);
+      set(form, "emp_guest_id", g.identity_id);
       set(form, "guest_email", g.email);
       set(form, "admin_name", g.admin_name);
       set(form, "admin_email", g.admin_email);
