@@ -9,11 +9,15 @@ Roles Matrix grid editor (Super Admin).
 """
 
 from datetime import datetime
-from io import BytesIO
+from io import BytesIO, StringIO
+import base64
+import csv
+import json
+import uuid
 from urllib.parse import quote
 
 from fastapi import APIRouter, Request, UploadFile, File, Form
-from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi.responses import RedirectResponse, JSONResponse, Response
 import openpyxl
 
 from ..auth import current_user, module_level, clear_roles_cache
@@ -23,10 +27,49 @@ from ..audit import audit
 from .. import ids
 from ..scope import is_internal_user
 from ..ratecard_import import validate_workbook, import_rows
+from ..master_import import parse_and_validate, validate_rows
+from ..master_import import sign_preview, verify_preview, source_hash
+from ..config import settings
 
 router = APIRouter(prefix="/masters")
 
 PAGE_SIZE = 100
+TENANT_MASTER_TABLES = {
+    "companies", "company_entities", "employees", "vendors", "vehicles", "drivers",
+    "individuals", "contacts", "contracts", "ratecards", "leads", "settings",
+}
+
+
+def _tenant_id(user):
+    tenant_id = str(user.get("tenant_id") or "").strip()
+    return tenant_id or None
+
+
+def _import_value(field, value):
+    if value is None:
+        return None
+    return _to_value(field, str(value))
+
+
+def _record_import_errors(conn, import_id, errors):
+    cur = conn.cursor()
+    for error in errors:
+        cur.execute(
+            "INSERT INTO master_import_errors "
+            "(error_id,import_id,row_number,source_field,source_value,canonical_field,error_code,message) "
+            "VALUES (:1,:2,:3,:4,:5,:6,:7,:8)",
+            (uuid.uuid4().hex, import_id, error.get("row"), error.get("source_field") or error.get("column"),
+             str(error.get("value"))[:500] if error.get("value") is not None else None,
+             error.get("canonical_field") or error.get("column"), error.get("code") or "VALIDATION_ERROR",
+             error.get("message", "Import validation error")[:1000]),
+        )
+
+
+def _safe_csv_value(value):
+    """Prevent spreadsheet formula execution when opening exported CSV."""
+    if isinstance(value, str) and value[:1] in {"=", "+", "-", "@"}:
+        return "'" + value
+    return value
 
 
 def _master_access_allowed(user):
@@ -269,6 +312,11 @@ MASTERS = {
     "ratecards": {
         "title": "Vendor Rate Chart", "sheet": "Ratecards", "table": "ratecards",
         "pk": "rate_card_id", "gen": "next_ratecard_id",
+        # RATE_CARD_ID is generated and the source format has no stable key.
+        # Do not enable generic confirmation until an approved business key and
+        # matching database uniqueness policy exist.
+        "import_blocked": True,
+        "import_blocked_reason": "RATECARDS has no approved stable source business key.",
         "base_where": "UPPER(NVL(owner_type,'VENDOR'))='VENDOR'",
         "list": [("sr_no", "Sr.No."), ("company_id", "Company Id"), ("legal_name", "Legal Name"),
                  ("group_name", "Group"), ("city", "City"), ("state", "State"),
@@ -441,6 +489,10 @@ def _to_value(field, raw):
     if ftype == "date":
         if not s:
             return None
+        try:
+            return datetime.fromisoformat(s).date()
+        except ValueError:
+            pass
         for fmt in ("%d-%m-%Y", "%Y-%m-%d", "%d/%m/%Y", "%d-%b-%y", "%d-%b-%Y"):
             try:
                 return datetime.strptime(s, fmt).date()
@@ -494,7 +546,9 @@ def company_ratecards_page(request: Request):
         return RedirectResponse(url="/home?msg=access-denied", status_code=303)
     return master_list(request, "company-ratecards")
 
-@router.get("/ratecards/import")
+# The canonical ratecard upload URL remains /masters/ratecards/import and is
+# handled by the signed generic workflow below. Legacy handlers are retained
+# only as migration reference and are intentionally not registered as routes.
 def ratecard_import_page(request: Request, msg: str = "", owner_type: str = "VENDOR"):
     user = current_user(request)
     if not user or not _master_access_allowed(user) or module_level(user, "Ratecards") != "F":
@@ -545,7 +599,6 @@ def _vendor_code_rows(content):
     return parsed, errors
 
 
-@router.post("/vendors/import")
 async def vendor_master_import(request: Request, file: UploadFile = File(...)):
     user = current_user(request)
     if not user or not _master_access_allowed(user) or module_level(user, "Vendors") != "F":
@@ -591,7 +644,6 @@ async def vendor_master_import(request: Request, file: UploadFile = File(...)):
                              status_code=303)
 
 
-@router.post("/ratecards/import")
 async def ratecard_import_submit(request: Request, file: UploadFile = File(...),
                                  owner_type: str = Form("VENDOR"), owner_id: str = Form(""),
                                  vendor_id: str = Form("")):
@@ -633,6 +685,229 @@ async def ratecard_import_submit(request: Request, file: UploadFile = File(...),
         {"request": request, "user": user, "message": f"Imported {len(ids)} rows", "errors": [], "row_count": len(ids)})
 
 
+@router.get("/{key}/import")
+def master_import_page(request: Request, key: str):
+    user = current_user(request)
+    cfg = _cfg(key)
+    if not user or not _master_access_allowed(user) or not _tenant_id(user) or not cfg or cfg.get("readonly") or cfg.get("import_blocked") or cfg["table"] not in TENANT_MASTER_TABLES or module_level(user, cfg["sheet"]) != "F":
+        return RedirectResponse(url="/home?msg=access-denied", status_code=303)
+    return templates.TemplateResponse("masters/import.html", {"request": request, "user": user, "cfg": cfg, "key": key})
+
+
+@router.post("/{key}/import")
+async def master_import_preview(request: Request, key: str, file: UploadFile = File(...), sheet: str = Form("")):
+    user = current_user(request)
+    cfg = _cfg(key)
+    if not user or not _master_access_allowed(user) or not _tenant_id(user) or not cfg or cfg.get("readonly") or cfg.get("import_blocked") or cfg["table"] not in TENANT_MASTER_TABLES or module_level(user, cfg["sheet"]) != "F":
+        return JSONResponse({"error": "not authorized"}, status_code=403)
+    content = await file.read()
+    filename = file.filename or "upload"
+    digest = source_hash(content)
+    tenant_id = _tenant_id(user)
+    headers, rows, errors, mapping = parse_and_validate(content, filename, cfg, sheet.strip() or None, tenant_id)
+    import_id = "IMP-" + uuid.uuid4().hex[:28].upper()
+    preview_id = uuid.uuid4().hex
+    plan = {"import_id": import_id, "preview_id": preview_id, "tenant_id": tenant_id,
+            "user_id": user.get("user_id"), "master": key, "source_filename": filename,
+            "source_hash": digest, "file_type": filename.rsplit(".", 1)[-1].lower(),
+            "headers": headers, "mapping": mapping, "rows": rows}
+    token = sign_preview(plan, settings.SECRET_KEY)
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO master_import_history "
+            "(import_id,preview_id,tenant_id,user_id,master_name,source_filename,source_file_hash,file_type,status,total_rows,valid_rows,rejected_rows,error_count) "
+            "VALUES (:1,:2,:3,:4,:5,:6,:7,:8,'PREVIEW',:9,:10,:11,:12)",
+            (import_id, preview_id, tenant_id, user.get("user_id"), key, filename, digest,
+             plan["file_type"], len(rows), len(rows) - len({e.get("row") for e in errors if e.get("row")}),
+             len({e.get("row") for e in errors if e.get("row")}), len(errors)),
+        )
+        if errors:
+            _record_import_errors(conn, import_id, errors)
+        audit(conn, user, "MASTER_IMPORT_PREVIEW", import_id,
+              f"master={key}; tenant={tenant_id}; file={filename}; hash={digest}")
+        conn.commit()
+    finally:
+        conn.close()
+    return templates.TemplateResponse("masters/import_preview.html", {
+        "request": request, "user": user, "cfg": cfg, "key": key,
+        "headers": headers, "rows": rows, "errors": errors, "mapping": mapping,
+        "payload": token, "source_filename": filename,
+    })
+
+
+@router.post("/{key}/import/confirm")
+async def master_import_confirm(request: Request, key: str, payload: str = Form(...), file: UploadFile = File(...)):
+    user = current_user(request)
+    cfg = _cfg(key)
+    if not user or not _master_access_allowed(user) or not _tenant_id(user) or not cfg or cfg.get("readonly") or cfg.get("import_blocked") or cfg["table"] not in TENANT_MASTER_TABLES or module_level(user, cfg["sheet"]) != "F":
+        return JSONResponse({"error": "not authorized"}, status_code=403)
+    data, token_error = verify_preview(payload, settings.SECRET_KEY)
+    if token_error:
+        return RedirectResponse(url=f"/masters/{key}?msg={token_error}", status_code=303)
+    try:
+        rows = data["rows"]
+        headers = data["headers"]
+        if data["master"] != key or data["tenant_id"] != _tenant_id(user) or data.get("user_id") != user.get("user_id"):
+            raise ValueError("preview context mismatch")
+        content = await file.read()
+        if source_hash(content) != data["source_hash"]:
+            changed = get_connection()
+            try:
+                changed.cursor().execute("UPDATE master_import_history SET status='REJECTED',rejected_rows=total_rows,error_count=error_count+1,completed_at=SYSTIMESTAMP WHERE import_id=:1 AND status='PREVIEW'", (data["import_id"],))
+                _record_import_errors(changed, data["import_id"], [{"row": 0, "code": "SOURCE_CHANGED", "message": "The confirmation file hash differs from the preview source."}])
+                changed.commit()
+            finally:
+                changed.close()
+            return RedirectResponse(url=f"/masters/{key}?msg=SOURCE_CHANGED", status_code=303)
+        errors = validate_rows(headers, rows, cfg, _tenant_id(user))
+    except Exception:
+        return RedirectResponse(url=f"/masters/{key}?msg=invalid-import-preview", status_code=303)
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT status,error_count FROM master_import_history WHERE import_id=:1 AND preview_id=:2 AND tenant_id=:3",
+                (data["import_id"], data["preview_id"], _tenant_id(user)))
+    history = cur.fetchone()
+    if not history or history[0] != "PREVIEW":
+        conn.close()
+        return RedirectResponse(url=f"/masters/{key}?msg=PREVIEW_REPLAYED", status_code=303)
+    if int(history[1] or 0) > 0:
+        conn.close()
+        return RedirectResponse(url=f"/masters/{key}?msg=validation-rejected", status_code=303)
+    if errors:
+        cur.execute("UPDATE master_import_history SET status='REJECTED', error_count=:1, rejected_rows=:2, completed_at=SYSTIMESTAMP WHERE import_id=:3",
+                    (len(errors), len({e.get("row") for e in errors}), data["import_id"]))
+        _record_import_errors(conn, data["import_id"], errors)
+        conn.commit(); conn.close()
+        return RedirectResponse(url=f"/masters/{key}?msg=validation-rejected", status_code=303)
+    cur.execute("UPDATE master_import_history SET status='PROCESSING', confirmed_at=SYSTIMESTAMP WHERE import_id=:1",
+                (data["import_id"],))
+    conn.commit()
+    columns = [field["name"] for field in cfg.get("fields", []) if field["name"] in headers]
+    if cfg["pk"] not in columns:
+        columns.insert(0, cfg["pk"])
+    try:
+        tenant_id = _tenant_id(user)
+        inserted = updated = 0
+        field_map = {field["name"]: field for field in cfg.get("fields", [])}
+        for row in rows:
+            values = [_import_value(field_map.get(column, {"type": "text"}), row.get(column)) for column in columns]
+            cur.execute(f"SELECT {cfg['pk']} FROM {cfg['table']} WHERE tenant_id=:1 AND {cfg['pk']}=:2",
+                        (tenant_id, row.get(cfg["pk"])))
+            if cur.fetchone():
+                updated += 1
+                assignments = ",".join(f"{column}=:{index + 1}" for index, column in enumerate(columns[1:]))
+                if assignments:
+                    cur.execute(f"UPDATE {cfg['table']} SET {assignments} WHERE tenant_id=:{len(columns)} AND {cfg['pk']}=:{len(columns) + 1}",
+                                tuple(values[1:]) + (tenant_id, values[0]))
+            else:
+                inserted += 1
+                import_columns = ["tenant_id"] + columns
+                marks = ",".join(f":{index + 1}" for index in range(len(import_columns)))
+                cur.execute(f"INSERT INTO {cfg['table']} ({','.join(import_columns)}) VALUES ({marks})",
+                            (tenant_id,) + tuple(values))
+        audit(conn, user, "MASTER_IMPORT_CONFIRMED", data["import_id"],
+              f"master={key}; tenant={tenant_id}; inserted={inserted}; updated={updated}")
+        cur.execute("UPDATE master_import_history SET status='COMPLETED',completed_at=SYSTIMESTAMP,valid_rows=:1,inserted_rows=:2,updated_rows=:3 WHERE import_id=:4",
+                    (len(rows), inserted, updated, data["import_id"]))
+        conn.commit()
+    except Exception as exc:
+        conn.rollback()
+        failed = get_connection()
+        try:
+            failed.cursor().execute("UPDATE master_import_history SET status='FAILED',completed_at=SYSTIMESTAMP,error_count=error_count+1 WHERE import_id=:1", (data["import_id"],))
+            failed.cursor().execute("INSERT INTO master_import_errors (error_id,import_id,error_code,message) VALUES (:1,:2,'TRANSACTION_FAILED',:3)", (uuid.uuid4().hex, data["import_id"], str(exc)[:1000]))
+            failed.commit()
+        finally:
+            failed.close()
+        raise
+    finally:
+        conn.close()
+    return templates.TemplateResponse("masters/import_result.html", {
+        "request": request, "user": user, "key": key, "import_id": data["import_id"],
+        "total": len(rows), "inserted": inserted, "updated": updated,
+        "rejected": 0, "errors": 0,
+    })
+
+
+@router.get("/imports/history")
+def master_import_history(request: Request):
+    user = current_user(request)
+    if not user or not _master_access_allowed(user) or not _tenant_id(user):
+        return RedirectResponse(url="/home?msg=access-denied", status_code=303)
+    conn = get_connection(); cur = conn.cursor()
+    cur.execute("SELECT import_id,master_name,source_filename,status,total_rows,inserted_rows,updated_rows,rejected_rows,error_count,started_at FROM master_import_history WHERE tenant_id=:1 ORDER BY started_at DESC",
+                (_tenant_id(user),))
+    rows = cur.fetchall(); conn.close()
+    return templates.TemplateResponse("masters/import_history.html", {"request": request, "user": user, "rows": rows})
+
+
+@router.get("/imports/{import_id}/errors")
+def master_import_errors(request: Request, import_id: str):
+    user = current_user(request)
+    if not user or not _master_access_allowed(user) or not _tenant_id(user):
+        return JSONResponse({"error": "not authorized"}, status_code=403)
+    conn = get_connection(); cur = conn.cursor()
+    cur.execute("SELECT row_number,source_field,source_value,canonical_field,error_code,message FROM master_import_errors WHERE import_id=:1 AND EXISTS (SELECT 1 FROM master_import_history h WHERE h.import_id=:2 AND h.tenant_id=:3) ORDER BY row_number,error_id",
+                (import_id, import_id, _tenant_id(user)))
+    rows = cur.fetchall(); conn.close()
+    output = StringIO(); writer = csv.writer(output)
+    writer.writerow(("row_number", "source_field", "source_value", "canonical_field", "error_code", "message"))
+    writer.writerows([[_safe_csv_value(value) for value in row] for row in rows])
+    return Response(output.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="{import_id}-errors.csv"'})
+
+
+@router.get("/{key}/export")
+def master_export(request: Request, key: str):
+    user = current_user(request)
+    cfg = _cfg(key)
+    if not user or not _master_access_allowed(user) or not _tenant_id(user) or not cfg or module_level(user, cfg["sheet"]) is None:
+        return JSONResponse({"error": "not authorized"}, status_code=403)
+    columns = [column for column, _ in cfg["list"]]
+    if cfg["table"] not in TENANT_MASTER_TABLES:
+        return JSONResponse({"error": "This master is not tenant-scoped."}, status_code=409)
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(f"SELECT {','.join(columns)} FROM {cfg['table']} WHERE tenant_id=:1 ORDER BY {cfg['pk']}",
+                (_tenant_id(user),))
+    rows = cur.fetchall()
+    conn.close()
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow(columns)
+    writer.writerows(rows)
+    return Response(output.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="{key}.csv"'})
+
+
+@router.get("/{key}/export.xlsx")
+def master_export_xlsx(request: Request, key: str):
+    user = current_user(request)
+    cfg = _cfg(key)
+    if not user or not _master_access_allowed(user) or not _tenant_id(user) or not cfg or module_level(user, cfg["sheet"]) is None:
+        return JSONResponse({"error": "not authorized"}, status_code=403)
+    if cfg["table"] not in TENANT_MASTER_TABLES:
+        return JSONResponse({"error": "This master is not tenant-scoped."}, status_code=409)
+    columns = [column for column, _ in cfg["list"]]
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(f"SELECT {','.join(columns)} FROM {cfg['table']} WHERE tenant_id=:1 ORDER BY {cfg['pk']}",
+                (_tenant_id(user),))
+    rows = cur.fetchall()
+    conn.close()
+    workbook = openpyxl.Workbook(write_only=True)
+    sheet = workbook.create_sheet(title=cfg["title"][:31] or "Export")
+    sheet.append(columns)
+    for row in rows:
+        sheet.append([_safe_csv_value(value) for value in row])
+    stream = BytesIO()
+    workbook.save(stream)
+    return Response(stream.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="{key}.xlsx"'})
+
+
 @router.get("/{key}")
 def master_list(request: Request, key: str, q: str = "", page: int = 1):
     user = current_user(request)
@@ -660,15 +935,20 @@ def master_list(request: Request, key: str, q: str = "", page: int = 1):
     cols = ", ".join(selected_cols)
     dropdown_options = {}
     for dropdown_col in cfg.get("dropdown_filters") or []:
+        dropdown_where = " WHERE tenant_id=:1 AND " if cfg["table"] in TENANT_MASTER_TABLES else " WHERE "
+        dropdown_params = (_tenant_id(user),) if cfg["table"] in TENANT_MASTER_TABLES else ()
         cur.execute(
             f"SELECT DISTINCT {dropdown_col} FROM {cfg['table']} "
-            f"WHERE {dropdown_col} IS NOT NULL ORDER BY {dropdown_col}"
+            f"{dropdown_where}{dropdown_col} IS NOT NULL ORDER BY {dropdown_col}", dropdown_params or None
         )
         dropdown_options[dropdown_col] = [str(row[0]) for row in cur.fetchall()]
     # Quick search (q): OR across the configured search columns.
     # Per-field filters (f_<col>): AND-ed together, so any one field alone
     # works and several fields narrow the result further.
     params, conds = [], []
+    if cfg["table"] in TENANT_MASTER_TABLES:
+        params.append(_tenant_id(user))
+        conds.append("tenant_id=:1")
     if cfg.get("base_where"):
         conds.append(cfg["base_where"])
     if q:
@@ -729,7 +1009,9 @@ def master_list(request: Request, key: str, q: str = "", page: int = 1):
         "masters/list.html",
         {"request": request, "user": user,
          "cfg": {"key": key, "title": cfg["title"], "pk": cfg["pk"], "list": cfg["list"],
-                  "filters": active_filters, "date_filters": active_date_filters},
+                   "filters": active_filters, "date_filters": active_date_filters,
+                   "readonly": cfg.get("readonly", False),
+                   "import_blocked": cfg.get("import_blocked", False)},
          "rows": rows, "query": q, "qs": qs, "page": page, "pages": pages,
          "total": total, "level": level},
     )

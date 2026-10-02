@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Import Complete{% endblock %}
+{% block content %}
+<h2>Import Complete</h2>
+<dl class="row"><dt class="col-sm-3">Import ID</dt><dd class="col-sm-9"><code>{{ import_id }}</code></dd><dt class="col-sm-3">Total rows</dt><dd class="col-sm-9">{{ total }}</dd><dt class="col-sm-3">Inserted</dt><dd class="col-sm-9">{{ inserted }}</dd><dt class="col-sm-3">Updated</dt><dd class="col-sm-9">{{ updated }}</dd><dt class="col-sm-3">Rejected</dt><dd class="col-sm-9">{{ rejected }}</dd><dt class="col-sm-3">Errors</dt><dd class="col-sm-9">{{ errors }}</dd></dl>
+<a class="btn btn-outline-primary" href="/masters/{{ key }}">Return to Master</a>
+<a class="btn btn-outline-secondary" href="/masters/imports/{{ import_id }}/errors">Download Error Report</a>
+<a class="btn btn-outline-secondary" href="/masters/imports/history">View Import History</a>
+{% endblock %}

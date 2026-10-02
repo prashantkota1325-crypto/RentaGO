@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Import {{ cfg.title }}{% endblock %}
+{% block content %}
+<h2>Import {{ cfg.title }}</h2>
+<form method="post" enctype="multipart/form-data" class="card card-body">
+  <label class="form-label">CSV, XLSX, or XLSM</label>
+  <input class="form-control mb-2" type="file" name="file" accept=".csv,.xlsx,.xlsm" required>
+  <label class="form-label">Worksheet (optional for XLSX/XLSM)</label>
+  <input class="form-control mb-3" name="sheet" placeholder="First worksheet if blank">
+  <div><button class="btn btn-primary">Validate and Preview</button> <a class="btn btn-outline-secondary" href="/masters/{{ key }}">Cancel</a></div>
+</form>
+{% endblock %}

@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Import {{ cfg.title }}{% endblock %}
+{% block content %}
+<h2>Import {{ cfg.title }}</h2>
+<p class="text-muted">Preview only. No database changes occur until Confirm Import is selected.</p>
+{% if mapping %}<h5>Column Mapping</h5><table class="table table-sm"><tbody>{% for source, target in mapping.items() %}<tr><td>{{ source }}</td><td>&rarr;</td><td>{{ target }}</td></tr>{% endfor %}</tbody></table>{% endif %}
+{% if errors %}<div class="alert alert-danger"><strong>Import rejected.</strong><ul>{% for error in errors %}<li>Row {{ error.row or '-' }}, {{ error.column or error.source_field }}: {{ error.message }}</li>{% endfor %}</ul></div><p>Resolve the errors and upload the corrected source file for a new preview.</p>{% else %}
+<div class="alert alert-warning">{{ rows|length }} rows passed file validation. Review the sample, then confirm.</div>
+<form method="post" action="/masters/{{ key }}/import/confirm">
+  <input type="hidden" name="payload" value="{{ payload }}">
+  <label class="form-label">Re-select the same source file to verify its hash</label>
+  <input class="form-control mb-2" type="file" name="file" accept=".csv,.xlsx,.xlsm" required>
+  <button class="btn btn-primary">Confirm Import</button>
+  <a class="btn btn-outline-secondary" href="/masters/{{ key }}">Cancel</a>
+</form>
+<div class="table-responsive mt-3"><table class="table table-sm"><thead><tr>{% for col in headers %}<th>{{ col }}</th>{% endfor %}</tr></thead><tbody>{% for row in rows[:10] %}<tr>{% for col in headers %}<td>{{ row.get(col, '') or '' }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
+{% endif %}
+{% endblock %}

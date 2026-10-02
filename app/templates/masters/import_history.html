@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}Master Import History{% endblock %}
+{% block content %}
+<h2>Master Import History</h2>
+<div class="table-responsive"><table class="table table-sm table-striped"><thead><tr><th>Import ID</th><th>Master</th><th>File</th><th>Status</th><th>Total</th><th>Inserted</th><th>Updated</th><th>Rejected</th><th>Errors</th><th></th></tr></thead><tbody>
+{% for row in rows %}<tr>{% for value in row[:9] %}<td>{{ value }}</td>{% endfor %}<td><a href="/masters/imports/{{ row[0] }}/errors">Error report</a></td></tr>{% else %}<tr><td colspan="10">No imports found.</td></tr>{% endfor %}
+</tbody></table></div>
+{% endblock %}

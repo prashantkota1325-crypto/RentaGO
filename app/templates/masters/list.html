@@ -2,16 +2,7 @@
 {% block title %}{{ cfg.title }}{% endblock %}
 {% block content %}
 <h2>{{ cfg.title }} <span class="text-muted small fs-6">{{ total }} records</span></h2>
-{% if cfg.key == 'ratecards' %}<a class="btn btn-outline-primary mb-3" href="/masters/ratecards/import?owner_type=VENDOR">Upload Vendor Rate Chart</a>{% elif cfg.key == 'individual-ratecards' %}<a class="btn btn-outline-primary mb-3" href="/masters/ratecards/import?owner_type=INDIVIDUAL">Upload Individual Rate Chart</a>{% elif cfg.key == 'company-ratecards' %}<a class="btn btn-outline-primary mb-3" href="/masters/ratecards/import?owner_type=COMPANY">Upload Company Rate Chart</a>{% endif %}
-{% if cfg.key == 'vendors' and level == 'F' %}
-<form method="post" action="/masters/vendors/import" enctype="multipart/form-data" class="card card-body mb-3">
-  <div class="row g-2 align-items-end">
-    <div class="col-md-6"><label class="form-label mb-1">Upload Vendor Master (Code sheet)</label><input class="form-control" type="file" name="file" accept=".xlsx,.xlsm" required></div>
-    <div class="col-md-auto"><button class="btn btn-outline-primary">Upload Code Sheet</button></div>
-  </div>
-  <div class="form-text">Uses the workbook sheet named <code>Code</code>; Company Id is the Vendor ID.</div>
-</form>
-{% endif %}
+{% if cfg.key == 'vendors' and level == 'F' %}<div class="alert alert-info py-2">Vendor uploads use the validated preview workflow below.</div>{% endif %}
 
 {% set msg = request.query_params.get('msg', '') %}
 {% if msg %}
@@ -57,6 +48,10 @@
     the quick search matches any field.</div>
 </div></form>
 <div class="d-flex justify-content-end mb-2">
+  {% if level == 'F' and not cfg.readonly and not cfg.import_blocked %}<a class="btn btn-outline-primary me-2" href="/masters/{{ cfg.key }}/import">Import</a>{% endif %}
+  <a class="btn btn-outline-secondary me-2" href="/masters/{{ cfg.key }}/export">Export CSV</a>
+  <a class="btn btn-outline-secondary me-2" href="/masters/{{ cfg.key }}/export.xlsx">Export XLSX</a>
+  <a class="btn btn-outline-secondary me-2" href="/masters/imports/history">Import History</a>
   {% if level == 'F' %}<a class="btn btn-primary" href="/masters/{{ cfg.key }}/new">+ New {{ cfg.title[:-1] if cfg.title.endswith('s') else cfg.title }}</a>{% endif %}
 </div>
 
