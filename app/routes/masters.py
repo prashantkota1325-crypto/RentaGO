@@ -1013,7 +1013,7 @@ async def master_designer_add_field(request: Request, key: str, technical_name: 
     order = cur.fetchone()[0]
     field_id = "MF-" + uuid.uuid4().hex[:28].upper()
     cur.execute("INSERT INTO master_field_definitions (field_id,master_id,technical_name,display_label,excel_header,field_type,required,active,display_enabled,import_enabled,export_enabled,searchable,filterable,sortable,display_order,system_protected,generated_field,custom_field,created_at,created_by,updated_at,updated_by) VALUES (:1,:2,:3,:4,:5,:6,:7,'Y','Y',:8,:9,'N','N','N',:10,'N','N','Y',SYSTIMESTAMP,:11,SYSTIMESTAMP,:11)",
-                (field_id, master_id, technical_name, display_label.strip(), excel_header.strip(), data_type, "Y" if required.upper() in {"Y", "YES"} else "N", "Y" if import_enabled.upper() in {"Y", "YES"} else "N", "Y" if export_enabled.upper() in {"Y", "YES"} else "N", order, user.get("user_id")))
+                (field_id, master_id, technical_name, display_label.strip(), excel_header.strip(), data_type, "Y" if required.upper() in {"Y", "YES"} else "N", "Y" if import_enabled.upper() in {"Y", "YES"} else "N", "Y" if export_enabled.upper() in {"Y", "YES"} else "N", order, user.get("user_id"), user.get("user_id")))
     for alias in [item.strip() for item in aliases.split(",") if item.strip()]:
         cur.execute("INSERT INTO master_field_aliases (alias_id,field_id,alias_value,normalized_alias) VALUES (:1,:2,:3,:4)", (uuid.uuid4().hex, field_id, alias, normalize_header(alias)))
     for number, option in enumerate([item.strip() for item in options.split(",") if item.strip()], 1):
@@ -1037,11 +1037,71 @@ def master_designer_publish(request: Request, key: str):
     version = int(cur.fetchone()[0])
     cur.execute("UPDATE master_configuration_versions SET status='SUPERSEDED' WHERE master_id=:1 AND status='PUBLISHED'", (master_id,))
     version_id = "MCV-" + uuid.uuid4().hex[:28].upper()
-    cur.execute("INSERT INTO master_configuration_versions (config_version_id,master_id,version_no,status,config_json,created_by,published_at,published_by) VALUES (:1,:2,:3,'PUBLISHED',:4,:5,SYSTIMESTAMP,:5)", (version_id, master_id, version, json.dumps(snapshot), user.get("user_id")))
+    cur.execute("INSERT INTO master_configuration_versions (config_version_id,master_id,version_no,status,config_json,created_by,published_at,published_by) VALUES (:1,:2,:3,'PUBLISHED',:4,:5,SYSTIMESTAMP,:6)", (version_id, master_id, version, json.dumps(snapshot), user.get("user_id"), user.get("user_id")))
     cur.execute("UPDATE master_definitions SET version=:1,updated_at=SYSTIMESTAMP,updated_by=:2 WHERE master_id=:3", (version, user.get("user_id"), master_id))
     _designer_audit(conn, user, master_id, "CONFIG_PUBLISHED", None, None, f"version={version}", version_id)
     conn.commit(); conn.close()
     return RedirectResponse(url=f"/masters/designer/{key}?msg=published", status_code=303)
+
+
+@router.get("/designer/{key}/fields/{field_id}/edit")
+def master_designer_edit_field(request: Request, key: str, field_id: str):
+    user = current_user(request)
+    if not _designer_allowed(user):
+        return RedirectResponse(url="/home?msg=access-denied", status_code=303)
+    conn = get_connection(); cur = conn.cursor()
+    cur.execute("SELECT field_id,technical_name,display_label,excel_header,field_type,required,import_enabled,export_enabled,system_protected FROM master_field_definitions WHERE field_id=:1", (field_id,))
+    field = cur.fetchone(); conn.close()
+    if not field:
+        return RedirectResponse(url=f"/masters/designer/{key}?msg=not-found", status_code=303)
+    return templates.TemplateResponse("masters/designer_field.html", {"request": request, "user": user, "key": key, "field": field, "field_types": sorted(FIELD_TYPES)})
+
+
+@router.post("/designer/{key}/fields/{field_id}/edit")
+def master_designer_update_field(request: Request, key: str, field_id: str, display_label: str = Form(...), excel_header: str = Form(...), data_type: str = Form("TEXT"), required: str = Form("N"), import_enabled: str = Form("Y"), export_enabled: str = Form("Y"), aliases: str = Form(""), options: str = Form("")):
+    user = current_user(request)
+    if not _designer_allowed(user):
+        return JSONResponse({"error": "not authorized"}, status_code=403)
+    try:
+        data_type = field_type(data_type)
+    except ValueError as exc:
+        return RedirectResponse(url=f"/masters/designer/{key}/fields/{field_id}/edit?msg={quote(str(exc))}", status_code=303)
+    conn = get_connection(); cur = conn.cursor()
+    cur.execute("SELECT master_id,technical_name,system_protected,display_label,excel_header FROM master_field_definitions WHERE field_id=:1", (field_id,))
+    old = cur.fetchone()
+    if not old:
+        conn.close(); return RedirectResponse(url=f"/masters/designer/{key}?msg=not-found", status_code=303)
+    if old[2] == "Y":
+        conn.close(); return RedirectResponse(url=f"/masters/designer/{key}?msg=protected-field", status_code=303)
+    cur.execute("UPDATE master_field_definitions SET display_label=:1,excel_header=:2,field_type=:3,required=:4,import_enabled=:5,export_enabled=:6,updated_at=SYSTIMESTAMP,updated_by=:7 WHERE field_id=:8",
+                (display_label.strip(), excel_header.strip(), data_type, "Y" if required.upper() in {"Y", "YES"} else "N", "Y" if import_enabled.upper() in {"Y", "YES"} else "N", "Y" if export_enabled.upper() in {"Y", "YES"} else "N", user.get("user_id"), field_id))
+    if old[3] != display_label.strip() or old[4] != excel_header.strip():
+        _designer_audit(conn, user, old[0], "FIELD_UPDATED", field_id, f"label={old[3]};header={old[4]}", f"label={display_label.strip()};header={excel_header.strip()}")
+    cur.execute("SELECT alias_id,normalized_alias FROM master_field_aliases WHERE field_id=:1 AND active='Y'", (field_id,))
+    existing_aliases = {row[1]: row[0] for row in cur.fetchall()}
+    requested_aliases = {item.strip() for item in aliases.split(",") if item.strip()}
+    for alias in requested_aliases:
+        normalized = normalize_header(alias)
+        if normalized not in existing_aliases:
+            cur.execute("INSERT INTO master_field_aliases (alias_id,field_id,alias_value,normalized_alias) VALUES (:1,:2,:3,:4)", (uuid.uuid4().hex, field_id, alias, normalized))
+            _designer_audit(conn, user, old[0], "ALIAS_ADDED", field_id, None, alias)
+    for normalized, alias_id in existing_aliases.items():
+        if normalized not in {normalize_header(item) for item in requested_aliases}:
+            cur.execute("UPDATE master_field_aliases SET active='N' WHERE alias_id=:1", (alias_id,))
+            _designer_audit(conn, user, old[0], "ALIAS_REMOVED", field_id, normalized, None)
+    cur.execute("SELECT option_id,option_value FROM master_field_options WHERE field_id=:1 AND active='Y'", (field_id,))
+    existing_options = {row[1]: row[0] for row in cur.fetchall()}
+    requested_options = {item.strip() for item in options.split(",") if item.strip()}
+    for option in requested_options:
+        if option not in existing_options:
+            cur.execute("INSERT INTO master_field_options (option_id,field_id,option_value,display_label,display_order) VALUES (:1,:2,:3,:4,:5)", (uuid.uuid4().hex, field_id, option, option, len(existing_options) + 1))
+            _designer_audit(conn, user, old[0], "OPTION_ADDED", field_id, None, option)
+    for option, option_id in existing_options.items():
+        if option not in requested_options:
+            cur.execute("UPDATE master_field_options SET active='N' WHERE option_id=:1", (option_id,))
+            _designer_audit(conn, user, old[0], "OPTION_DISABLED", field_id, option, None)
+    conn.commit(); conn.close()
+    return RedirectResponse(url=f"/masters/designer/{key}?msg=field-updated", status_code=303)
 
 
 @router.post("/designer/{key}/fields/{field_id}/toggle")

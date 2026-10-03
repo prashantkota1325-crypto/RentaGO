@@ -88,6 +88,8 @@ def map_headers(headers, cfg):
     aliases = dict(ALIASES.get(cfg.get("table", ""), {}))
     aliases.update({_name(field): field for field in fields})
     for field in cfg.get("fields", []):
+        aliases[_name(field.get("excel_header"))] = field["name"]
+        aliases[_name(field.get("label"))] = field["name"]
         for alias in field.get("aliases", []):
             aliases[_name(alias)] = field["name"]
     mapped, mapping, errors = [], {}, []

@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Edit Master Field{% endblock %}
+{% block content %}
+<h2>Edit Field: <code>{{ field[1] }}</code></h2>
+{% if field[8] == 'Y' %}<div class="alert alert-warning">SYSTEM PROTECTED: this field cannot be edited.</div>{% endif %}
+<form method="post" class="card card-body"><div class="row g-2"><div class="col-md-4"><label class="form-label">Display Label</label><input class="form-control" name="display_label" value="{{ field[2] }}" required></div><div class="col-md-4"><label class="form-label">Excel Header</label><input class="form-control" name="excel_header" value="{{ field[3] }}" required></div><div class="col-md-4"><label class="form-label">Data Type</label><select class="form-select" name="data_type">{% for item in field_types %}<option {% if item == field[4] %}selected{% endif %}>{{ item }}</option>{% endfor %}</select></div><div class="col-md-4"><label class="form-label">Aliases</label><input class="form-control" name="aliases" placeholder="Comma separated"></div><div class="col-md-4"><label class="form-label">Options</label><input class="form-control" name="options" placeholder="Comma separated"></div><div class="col-md-4 d-flex align-items-end"><button class="btn btn-primary" {% if field[8] == 'Y' %}disabled{% endif %}>Save Draft</button> <a class="btn btn-outline-secondary ms-2" href="/masters/designer/{{ key }}">Cancel</a></div></div></form>
+{% endblock %}
