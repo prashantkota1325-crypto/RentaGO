@@ -87,6 +87,9 @@ def map_headers(headers, cfg):
     fields = {field["name"] for field in cfg.get("fields", [])} | {cfg["pk"], "tenant_id"}
     aliases = dict(ALIASES.get(cfg.get("table", ""), {}))
     aliases.update({_name(field): field for field in fields})
+    for field in cfg.get("fields", []):
+        for alias in field.get("aliases", []):
+            aliases[_name(alias)] = field["name"]
     mapped, mapping, errors = [], {}, []
     for source in headers:
         target = aliases.get(_name(source))
@@ -170,8 +173,14 @@ def validate_rows(headers, rows, cfg, tenant_id=None):
                 errors.append({"row": number, "column": name, "code": "REQUIRED_FIELD_MISSING", "message": "Required value is missing."})
             if value and field.get("options") and value not in field["options"]:
                 errors.append({"row": number, "column": name, "value": value, "code": "INVALID_STATUS", "message": "Value is not in the allowed list."})
-            if value and field.get("type") == "email" and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", value):
+            if value and (field.get("type") == "email" or field.get("validation_rule") == "EMAIL") and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", value):
                 errors.append({"row": number, "column": name, "code": "INVALID_EMAIL", "message": "Invalid email address."})
+            if value and field.get("regex_pattern") and not re.fullmatch(field["regex_pattern"], value):
+                errors.append({"row": number, "column": name, "code": "REGEX_MISMATCH", "message": "Value does not match the configured validation rule."})
+            if value and field.get("min_length") is not None and len(value) < int(field["min_length"]):
+                errors.append({"row": number, "column": name, "code": "MIN_LENGTH", "message": "Value is shorter than the configured minimum."})
+            if value and field.get("max_length") is not None and len(value) > int(field["max_length"]):
+                errors.append({"row": number, "column": name, "code": "MAX_LENGTH", "message": "Value exceeds the configured maximum."})
             if value and field.get("type") == "number":
                 try:
                     float(value)

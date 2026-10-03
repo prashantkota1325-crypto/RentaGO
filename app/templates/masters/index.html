@@ -2,6 +2,7 @@
 {% block title %}Masters{% endblock %}
 {% block content %}
 <h2>Master Data &amp; Sheets</h2>
+{% if matrix_access %}<div class="mb-3"><a class="btn btn-outline-primary" href="/masters/designer">Master Designer</a></div>{% endif %}
 <div class="row mt-4">
   {% for column in columns %}
   <div class="col-md-4">

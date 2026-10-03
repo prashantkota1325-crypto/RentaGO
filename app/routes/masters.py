@@ -30,6 +30,10 @@ from ..ratecard_import import validate_workbook, import_rows
 from ..master_import import parse_and_validate, validate_rows
 from ..master_import import sign_preview, verify_preview, source_hash
 from ..config import settings
+from ..master_designer import (
+    FIELD_TYPES, PROTECTED_FIELDS, field_type, load_published_config,
+    normalize_header, save_custom_values, seed_metadata, snapshot_config, validate_technical_name,
+)
 
 router = APIRouter(prefix="/masters")
 
@@ -72,9 +76,49 @@ def _safe_csv_value(value):
     return value
 
 
+def _export_rows(conn, cfg, tenant_id):
+    columns = [column for column, _ in cfg["list"]]
+    custom_fields = {field["name"]: field for field in cfg.get("fields", []) if field.get("custom_field")}
+    db_columns = [column for column in columns if column not in custom_fields]
+    cur = conn.cursor()
+    cur.execute(f"SELECT {','.join(db_columns)} FROM {cfg['table']} WHERE tenant_id=:1 ORDER BY {cfg['pk']}", (tenant_id,))
+    raw_rows = cur.fetchall()
+    rows = []
+    for raw in raw_rows:
+        values = dict(zip(db_columns, raw))
+        record_id = values.get(cfg["pk"])
+        for name, field in custom_fields.items():
+            cur.execute("SELECT value_text FROM master_custom_values WHERE master_id=:1 AND tenant_id=:2 AND record_id=:3 AND field_id=:4",
+                        (cfg.get("_metadata_master_id"), tenant_id, str(record_id), field.get("field_id")))
+            value = cur.fetchone()
+            values[name] = value[0] if value else None
+        rows.append([values.get(column) for column in columns])
+    return columns, rows
+
+
 def _master_access_allowed(user):
     """Generic masters are internal RentaGO administration surfaces."""
     return is_internal_user(user)
+
+
+def _designer_allowed(user):
+    if not user or not _master_access_allowed(user):
+        return False
+    return str(user.get("role") or "").strip().lower() in {"super admin", "superadmin"} or module_level(user, "Roles Matrix") == "F"
+
+
+def _designer_master_id(cur, key):
+    cur.execute("SELECT master_id FROM master_definitions WHERE master_key=:1 AND active='Y'", (key,))
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
+def _designer_audit(conn, user, master_id, action, field_id=None, old_value=None, new_value=None, version_id=None):
+    conn.cursor().execute(
+        "INSERT INTO master_configuration_audit (config_audit_id,tenant_id,user_id,master_id,field_id,config_version_id,action,old_value,new_value) VALUES (:1,:2,:3,:4,:5,:6,:7,:8,:9)",
+        (uuid.uuid4().hex, _tenant_id(user), user.get("user_id"), master_id, field_id, version_id, action,
+         str(old_value)[:2000] if old_value is not None else None, str(new_value)[:2000] if new_value is not None else None),
+    )
 
 # Keep the matrix editor complete even when a workbook import did not contain
 # rows for newer web modules. Missing rows remain no-access until an admin
@@ -453,6 +497,18 @@ def _cfg(key):
     return MASTERS.get(key)
 
 
+def _effective_cfg(key, cfg, user):
+    if not cfg:
+        return cfg
+    try:
+        conn = get_connection()
+        effective = load_published_config(conn, key, cfg)
+        conn.close()
+        return effective
+    except Exception:
+        return cfg
+
+
 def _sync_rentago_employees(conn):
     """Mirror internal RentaGO users into the RentaGO Employees master."""
     cur = conn.cursor()
@@ -689,6 +745,7 @@ async def ratecard_import_submit(request: Request, file: UploadFile = File(...),
 def master_import_page(request: Request, key: str):
     user = current_user(request)
     cfg = _cfg(key)
+    cfg = _effective_cfg(key, cfg, user)
     if not user or not _master_access_allowed(user) or not _tenant_id(user) or not cfg or cfg.get("readonly") or cfg.get("import_blocked") or cfg["table"] not in TENANT_MASTER_TABLES or module_level(user, cfg["sheet"]) != "F":
         return RedirectResponse(url="/home?msg=access-denied", status_code=303)
     return templates.TemplateResponse("masters/import.html", {"request": request, "user": user, "cfg": cfg, "key": key})
@@ -698,6 +755,7 @@ def master_import_page(request: Request, key: str):
 async def master_import_preview(request: Request, key: str, file: UploadFile = File(...), sheet: str = Form("")):
     user = current_user(request)
     cfg = _cfg(key)
+    cfg = _effective_cfg(key, cfg, user)
     if not user or not _master_access_allowed(user) or not _tenant_id(user) or not cfg or cfg.get("readonly") or cfg.get("import_blocked") or cfg["table"] not in TENANT_MASTER_TABLES or module_level(user, cfg["sheet"]) != "F":
         return JSONResponse({"error": "not authorized"}, status_code=403)
     content = await file.read()
@@ -741,6 +799,7 @@ async def master_import_preview(request: Request, key: str, file: UploadFile = F
 async def master_import_confirm(request: Request, key: str, payload: str = Form(...), file: UploadFile = File(...)):
     user = current_user(request)
     cfg = _cfg(key)
+    cfg = _effective_cfg(key, cfg, user)
     if not user or not _master_access_allowed(user) or not _tenant_id(user) or not cfg or cfg.get("readonly") or cfg.get("import_blocked") or cfg["table"] not in TENANT_MASTER_TABLES or module_level(user, cfg["sheet"]) != "F":
         return JSONResponse({"error": "not authorized"}, status_code=403)
     data, token_error = verify_preview(payload, settings.SECRET_KEY)
@@ -784,7 +843,8 @@ async def master_import_confirm(request: Request, key: str, payload: str = Form(
     cur.execute("UPDATE master_import_history SET status='PROCESSING', confirmed_at=SYSTIMESTAMP WHERE import_id=:1",
                 (data["import_id"],))
     conn.commit()
-    columns = [field["name"] for field in cfg.get("fields", []) if field["name"] in headers]
+    custom_fields = [field for field in cfg.get("fields", []) if field.get("custom_field")]
+    columns = [field["name"] for field in cfg.get("fields", []) if field["name"] in headers and not field.get("custom_field")]
     if cfg["pk"] not in columns:
         columns.insert(0, cfg["pk"])
     try:
@@ -801,12 +861,14 @@ async def master_import_confirm(request: Request, key: str, payload: str = Form(
                 if assignments:
                     cur.execute(f"UPDATE {cfg['table']} SET {assignments} WHERE tenant_id=:{len(columns)} AND {cfg['pk']}=:{len(columns) + 1}",
                                 tuple(values[1:]) + (tenant_id, values[0]))
+                save_custom_values(conn, cfg.get("_metadata_master_id"), tenant_id, values[0], custom_fields, row, user.get("user_id"))
             else:
                 inserted += 1
                 import_columns = ["tenant_id"] + columns
                 marks = ",".join(f":{index + 1}" for index in range(len(import_columns)))
                 cur.execute(f"INSERT INTO {cfg['table']} ({','.join(import_columns)}) VALUES ({marks})",
                             (tenant_id,) + tuple(values))
+                save_custom_values(conn, cfg.get("_metadata_master_id"), tenant_id, values[0], custom_fields, row, user.get("user_id"))
         audit(conn, user, "MASTER_IMPORT_CONFIRMED", data["import_id"],
               f"master={key}; tenant={tenant_id}; inserted={inserted}; updated={updated}")
         cur.execute("UPDATE master_import_history SET status='COMPLETED',completed_at=SYSTIMESTAMP,valid_rows=:1,inserted_rows=:2,updated_rows=:3 WHERE import_id=:4",
@@ -863,16 +925,13 @@ def master_import_errors(request: Request, import_id: str):
 def master_export(request: Request, key: str):
     user = current_user(request)
     cfg = _cfg(key)
+    cfg = _effective_cfg(key, cfg, user)
     if not user or not _master_access_allowed(user) or not _tenant_id(user) or not cfg or module_level(user, cfg["sheet"]) is None:
         return JSONResponse({"error": "not authorized"}, status_code=403)
-    columns = [column for column, _ in cfg["list"]]
     if cfg["table"] not in TENANT_MASTER_TABLES:
         return JSONResponse({"error": "This master is not tenant-scoped."}, status_code=409)
     conn = get_connection()
-    cur = conn.cursor()
-    cur.execute(f"SELECT {','.join(columns)} FROM {cfg['table']} WHERE tenant_id=:1 ORDER BY {cfg['pk']}",
-                (_tenant_id(user),))
-    rows = cur.fetchall()
+    columns, rows = _export_rows(conn, cfg, _tenant_id(user))
     conn.close()
     output = StringIO()
     writer = csv.writer(output)
@@ -886,16 +945,13 @@ def master_export(request: Request, key: str):
 def master_export_xlsx(request: Request, key: str):
     user = current_user(request)
     cfg = _cfg(key)
+    cfg = _effective_cfg(key, cfg, user)
     if not user or not _master_access_allowed(user) or not _tenant_id(user) or not cfg or module_level(user, cfg["sheet"]) is None:
         return JSONResponse({"error": "not authorized"}, status_code=403)
     if cfg["table"] not in TENANT_MASTER_TABLES:
         return JSONResponse({"error": "This master is not tenant-scoped."}, status_code=409)
-    columns = [column for column, _ in cfg["list"]]
     conn = get_connection()
-    cur = conn.cursor()
-    cur.execute(f"SELECT {','.join(columns)} FROM {cfg['table']} WHERE tenant_id=:1 ORDER BY {cfg['pk']}",
-                (_tenant_id(user),))
-    rows = cur.fetchall()
+    columns, rows = _export_rows(conn, cfg, _tenant_id(user))
     conn.close()
     workbook = openpyxl.Workbook(write_only=True)
     sheet = workbook.create_sheet(title=cfg["title"][:31] or "Export")
@@ -906,6 +962,144 @@ def master_export_xlsx(request: Request, key: str):
     workbook.save(stream)
     return Response(stream.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": f'attachment; filename="{key}.xlsx"'})
+
+
+@router.get("/designer")
+def master_designer(request: Request):
+    user = current_user(request)
+    if not _designer_allowed(user):
+        return RedirectResponse(url="/home?msg=access-denied", status_code=303)
+    conn = get_connection(); cur = conn.cursor()
+    cur.execute("SELECT master_key,display_name,database_table,version,import_enabled,export_enabled,tenant_scoped FROM master_definitions WHERE active='Y' ORDER BY display_name")
+    masters = cur.fetchall(); conn.close()
+    return templates.TemplateResponse("masters/designer.html", {"request": request, "user": user, "masters": masters})
+
+
+@router.get("/designer/{key}")
+def master_designer_detail(request: Request, key: str):
+    user = current_user(request)
+    if not _designer_allowed(user):
+        return RedirectResponse(url="/home?msg=access-denied", status_code=303)
+    conn = get_connection(); cur = conn.cursor()
+    master_id = _designer_master_id(cur, key)
+    if not master_id:
+        conn.close()
+        return RedirectResponse(url="/masters/designer", status_code=303)
+    cur.execute("SELECT display_name,import_enabled,export_enabled,version FROM master_definitions WHERE master_id=:1", (master_id,))
+    master = cur.fetchone()
+    cur.execute("SELECT field_id,technical_name,display_label,excel_header,field_type,required,import_enabled,export_enabled,active,system_protected,custom_field,display_order FROM master_field_definitions WHERE master_id=:1 ORDER BY display_order,technical_name", (master_id,))
+    fields = cur.fetchall(); conn.close()
+    return templates.TemplateResponse("masters/designer_detail.html", {"request": request, "user": user, "key": key, "master": master, "fields": fields, "field_types": sorted(FIELD_TYPES)})
+
+
+@router.post("/designer/{key}/fields")
+async def master_designer_add_field(request: Request, key: str, technical_name: str = Form(...), display_label: str = Form(...), excel_header: str = Form(...), data_type: str = Form("TEXT"), required: str = Form("N"), import_enabled: str = Form("Y"), export_enabled: str = Form("Y"), aliases: str = Form(""), options: str = Form("")):
+    user = current_user(request)
+    if not _designer_allowed(user):
+        return JSONResponse({"error": "not authorized"}, status_code=403)
+    try:
+        technical_name = validate_technical_name(technical_name)
+        data_type = field_type(data_type)
+    except ValueError as exc:
+        return RedirectResponse(url=f"/masters/designer/{key}?msg={quote(str(exc))}", status_code=303)
+    conn = get_connection(); cur = conn.cursor()
+    master_id = _designer_master_id(cur, key)
+    if not master_id:
+        conn.close(); return RedirectResponse(url="/masters/designer", status_code=303)
+    cur.execute("SELECT COUNT(*) FROM master_field_definitions WHERE master_id=:1 AND technical_name=:2", (master_id, technical_name))
+    if cur.fetchone()[0]:
+        conn.close(); return RedirectResponse(url=f"/masters/designer/{key}?msg=field-exists", status_code=303)
+    cur.execute("SELECT NVL(MAX(display_order),0)+1 FROM master_field_definitions WHERE master_id=:1", (master_id,))
+    order = cur.fetchone()[0]
+    field_id = "MF-" + uuid.uuid4().hex[:28].upper()
+    cur.execute("INSERT INTO master_field_definitions (field_id,master_id,technical_name,display_label,excel_header,field_type,required,active,display_enabled,import_enabled,export_enabled,searchable,filterable,sortable,display_order,system_protected,generated_field,custom_field,created_at,created_by,updated_at,updated_by) VALUES (:1,:2,:3,:4,:5,:6,:7,'Y','Y',:8,:9,'N','N','N',:10,'N','N','Y',SYSTIMESTAMP,:11,SYSTIMESTAMP,:11)",
+                (field_id, master_id, technical_name, display_label.strip(), excel_header.strip(), data_type, "Y" if required.upper() in {"Y", "YES"} else "N", "Y" if import_enabled.upper() in {"Y", "YES"} else "N", "Y" if export_enabled.upper() in {"Y", "YES"} else "N", order, user.get("user_id")))
+    for alias in [item.strip() for item in aliases.split(",") if item.strip()]:
+        cur.execute("INSERT INTO master_field_aliases (alias_id,field_id,alias_value,normalized_alias) VALUES (:1,:2,:3,:4)", (uuid.uuid4().hex, field_id, alias, normalize_header(alias)))
+    for number, option in enumerate([item.strip() for item in options.split(",") if item.strip()], 1):
+        cur.execute("INSERT INTO master_field_options (option_id,field_id,option_value,display_label,display_order) VALUES (:1,:2,:3,:4,:5)", (uuid.uuid4().hex, field_id, option, option, number))
+    _designer_audit(conn, user, master_id, "FIELD_CREATED", field_id, None, technical_name)
+    conn.commit(); conn.close()
+    return RedirectResponse(url=f"/masters/designer/{key}?msg=field-created", status_code=303)
+
+
+@router.post("/designer/{key}/publish")
+def master_designer_publish(request: Request, key: str):
+    user = current_user(request)
+    if not _designer_allowed(user):
+        return JSONResponse({"error": "not authorized"}, status_code=403)
+    conn = get_connection(); cur = conn.cursor()
+    master_id = _designer_master_id(cur, key)
+    if not master_id:
+        conn.close(); return RedirectResponse(url="/masters/designer", status_code=303)
+    snapshot = snapshot_config(conn, master_id)
+    cur.execute("SELECT NVL(MAX(version_no),0)+1 FROM master_configuration_versions WHERE master_id=:1", (master_id,))
+    version = int(cur.fetchone()[0])
+    cur.execute("UPDATE master_configuration_versions SET status='SUPERSEDED' WHERE master_id=:1 AND status='PUBLISHED'", (master_id,))
+    version_id = "MCV-" + uuid.uuid4().hex[:28].upper()
+    cur.execute("INSERT INTO master_configuration_versions (config_version_id,master_id,version_no,status,config_json,created_by,published_at,published_by) VALUES (:1,:2,:3,'PUBLISHED',:4,:5,SYSTIMESTAMP,:5)", (version_id, master_id, version, json.dumps(snapshot), user.get("user_id")))
+    cur.execute("UPDATE master_definitions SET version=:1,updated_at=SYSTIMESTAMP,updated_by=:2 WHERE master_id=:3", (version, user.get("user_id"), master_id))
+    _designer_audit(conn, user, master_id, "CONFIG_PUBLISHED", None, None, f"version={version}", version_id)
+    conn.commit(); conn.close()
+    return RedirectResponse(url=f"/masters/designer/{key}?msg=published", status_code=303)
+
+
+@router.post("/designer/{key}/fields/{field_id}/toggle")
+def master_designer_toggle_field(request: Request, key: str, field_id: str):
+    user = current_user(request)
+    if not _designer_allowed(user):
+        return JSONResponse({"error": "not authorized"}, status_code=403)
+    conn = get_connection(); cur = conn.cursor()
+    cur.execute("SELECT master_id,system_protected,active FROM master_field_definitions WHERE field_id=:1", (field_id,))
+    row = cur.fetchone()
+    if not row or row[1] == "Y":
+        conn.close(); return RedirectResponse(url=f"/masters/designer/{key}?msg=protected-field", status_code=303)
+    value = "N" if row[2] == "Y" else "Y"
+    cur.execute("UPDATE master_field_definitions SET active=:1,updated_at=SYSTIMESTAMP,updated_by=:2 WHERE field_id=:3", (value, user.get("user_id"), field_id))
+    _designer_audit(conn, user, row[0], "FIELD_ENABLED" if value == "Y" else "FIELD_DISABLED", field_id, row[2], value)
+    conn.commit(); conn.close()
+    return RedirectResponse(url=f"/masters/designer/{key}?msg=field-updated", status_code=303)
+
+
+@router.post("/designer/{key}/fields/{field_id}/move")
+def master_designer_move_field(request: Request, key: str, field_id: str, direction: str = Form(...)):
+    user = current_user(request)
+    if not _designer_allowed(user):
+        return JSONResponse({"error": "not authorized"}, status_code=403)
+    conn = get_connection(); cur = conn.cursor()
+    cur.execute("SELECT master_id,display_order,system_protected FROM master_field_definitions WHERE field_id=:1", (field_id,))
+    row = cur.fetchone()
+    if not row:
+        conn.close(); return RedirectResponse(url=f"/masters/designer/{key}?msg=not-found", status_code=303)
+    step = -1 if direction.lower() == "up" else 1
+    cur.execute("SELECT field_id,display_order FROM master_field_definitions WHERE master_id=:1 AND display_order=:2", (row[0], row[1] + step))
+    other = cur.fetchone()
+    if other:
+        cur.execute("UPDATE master_field_definitions SET display_order=:1 WHERE field_id=:2", (row[1], other[0]))
+        cur.execute("UPDATE master_field_definitions SET display_order=:1 WHERE field_id=:2", (other[1], field_id))
+        _designer_audit(conn, user, row[0], "ORDER_CHANGED", field_id, row[1], other[1])
+    conn.commit(); conn.close()
+    return RedirectResponse(url=f"/masters/designer/{key}?msg=order-updated", status_code=303)
+
+
+@router.get("/designer/{key}/template")
+def master_designer_template(request: Request, key: str):
+    user = current_user(request)
+    cfg = _effective_cfg(key, _cfg(key), user)
+    if not _designer_allowed(user) or not cfg:
+        return JSONResponse({"error": "not authorized"}, status_code=403)
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = cfg["title"][:31] or "Import"
+    fields = [field for field in cfg.get("fields", []) if field.get("import_enabled") and not field.get("system_protected") and not field.get("generated_field")]
+    sheet.append([field.get("excel_header") or field.get("label") or field["name"] for field in fields])
+    notes = workbook.create_sheet("Validation Notes")
+    notes.append(["Excel Header", "Type", "Required", "Help"])
+    for field in fields:
+        notes.append([field.get("excel_header") or field.get("label"), field.get("type", "TEXT"), "Yes" if field.get("required") else "No", field.get("help_text") or ""])
+    stream = BytesIO(); workbook.save(stream)
+    return Response(stream.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="{key}-import-template.xlsx"'})
 
 
 @router.get("/{key}")

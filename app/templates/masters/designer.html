@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Master Designer{% endblock %}
+{% block content %}
+<h2>Master Designer</h2>
+<p class="text-muted">Configure published metadata used by the existing import and export engine.</p>
+<div class="row">{% for master in masters %}<div class="col-md-4 mb-3"><a class="text-decoration-none" href="/masters/designer/{{ master[0] }}"><div class="card"><div class="card-body"><h5>{{ master[1] }}</h5><div class="small text-muted">{{ master[2] }} &middot; v{{ master[3] }}</div><span class="badge bg-{{ 'success' if master[4] == 'Y' else 'secondary' }}">Import {{ 'Enabled' if master[4] == 'Y' else 'Disabled' }}</span></div></div></a></div>{% endfor %}</div>
+{% endblock %}
