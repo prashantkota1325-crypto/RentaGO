@@ -20,3 +20,10 @@ def test_production_migration_seeds_by_existing_metadata_keys():
     source = MIGRATION.read_text(encoding="utf-8")
     assert "seed_metadata(conn, MASTERS)" in source
     assert "Never patch a partially matching Production object" in source
+
+
+def test_production_migration_checks_existing_schema_mismatch():
+    source = MIGRATION.read_text(encoding="utf-8")
+    assert "_verify_existing_object" in source
+    assert "type_mismatch" in source
+    assert "missing_constraints" in source
