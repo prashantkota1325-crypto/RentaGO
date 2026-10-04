@@ -24,15 +24,16 @@ from migrate_master_designer import TABLES
 
 def _expected_columns(ddl):
     columns = {}
-    for line in ddl.splitlines():
-        match = re.match(r"\s*([A-Za-z][A-Za-z0-9_]*)\s+([A-Za-z]+(?:\(\d+(?:,\d+)?\))?)", line.strip().rstrip(","))
-        if match and match.group(1).upper() not in {"CONSTRAINT", "PRIMARY", "UNIQUE", "FOREIGN"}:
-            columns[match.group(1).upper()] = match.group(2).upper()
+    ignored = {"CREATE", "TABLE", "CONSTRAINT", "PRIMARY", "UNIQUE", "FOREIGN", "REFERENCES", "NOT", "NULL", "DEFAULT", "ON", "AND", "OR"}
+    for match in re.finditer(r"\b([A-Za-z][A-Za-z0-9_]*)\s+([A-Za-z][A-Za-z0-9_]*(?:\(\d+(?:,\d+)?\))?)", ddl):
+        name, data_type = match.group(1).upper(), match.group(2).upper()
+        if name not in ignored and data_type not in ignored:
+            columns[name] = data_type
     return columns
 
 
 def _expected_constraints(ddl):
-    return set(re.findall(r"CONSTRAINT\s+([A-Za-z][A-Za-z0-9_]*)", ddl, re.IGNORECASE))
+    return {name.upper() for name in re.findall(r"CONSTRAINT\s+([A-Za-z][A-Za-z0-9_]*)", ddl, re.IGNORECASE)}
 
 
 def _verify_existing_object(cur, table, ddl):
@@ -41,7 +42,7 @@ def _verify_existing_object(cur, table, ddl):
     actual = {row[0]: row[1] for row in cur.fetchall()}
     missing = sorted(set(expected) - set(actual))
     mismatched = sorted(name for name, data_type in expected.items()
-                        if name in actual and actual[name].upper() != data_type.split("(", 1)[0])
+                        if name in actual and actual[name].upper().split("(", 1)[0] != data_type.split("(", 1)[0])
     if missing or mismatched:
         raise RuntimeError(f"Existing {table} metadata mismatch: missing={missing}; type_mismatch={mismatched}")
     named_constraints = _expected_constraints(ddl)

@@ -27,3 +27,10 @@ def test_production_migration_checks_existing_schema_mismatch():
     assert "_verify_existing_object" in source
     assert "type_mismatch" in source
     assert "missing_constraints" in source
+
+
+def test_production_migration_normalizes_oracle_timestamp_precision():
+    source = MIGRATION.read_text(encoding="utf-8")
+    assert "split(\"(\", 1)[0]" in source
+    assert '"CREATE", "TABLE"' in source
+    assert "A-Za-z0-9_" in source
