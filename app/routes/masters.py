@@ -354,14 +354,13 @@ MASTERS = {
         ],
     },
     "ratecards": {
-        "title": "Vendor Rate Chart", "sheet": "Ratecards", "table": "ratecards",
+        "title": "Rate Cards", "sheet": "Ratecards", "table": "ratecards",
         "pk": "rate_card_id", "gen": "next_ratecard_id",
         # RATE_CARD_ID is generated and the source format has no stable key.
         # Do not enable generic confirmation until an approved business key and
         # matching database uniqueness policy exist.
         "import_blocked": True,
         "import_blocked_reason": "RATECARDS has no approved stable source business key.",
-        "base_where": "UPPER(NVL(owner_type,'VENDOR'))='VENDOR'",
         "list": [("sr_no", "Sr.No."), ("company_id", "Company Id"), ("legal_name", "Legal Name"),
                  ("group_name", "Group"), ("city", "City"), ("state", "State"),
                  ("category", "Vehicle Category"), ("vehicle_model", "Vehicle Model"),
@@ -491,6 +490,11 @@ MASTERS["individual-ratecards"] = {
     "title": "Individual Rate Chart",
     "base_where": "UPPER(owner_type)='INDIVIDUAL'",
 }
+MASTERS["vendor-ratecards"] = {
+    **MASTERS["ratecards"],
+    "title": "Vendor Rate Chart",
+    "base_where": "UPPER(NVL(owner_type,'VENDOR'))='VENDOR'",
+}
 
 
 def _cfg(key):
@@ -578,7 +582,7 @@ def masters_index(request: Request):
     requested_columns = [
         ["companies", "company-entities", "employees", "corporate-admin-contacts", "contacts", "contracts", "company-ratecards"],
         ["rentago-employees", "roles-matrix", "leads", "settings", "login-log", "audit-log", "otp-log"],
-        ["individuals", "individual-ratecards", "vendors", "ratecards", "vehicles", "drivers"],
+        ["individuals", "individual-ratecards", "ratecards", "vendor-ratecards", "vendors", "vehicles", "drivers"],
     ]
     card_map = {card["key"]: card for card in cards}
     columns = []
@@ -971,7 +975,7 @@ def master_designer(request: Request):
         return RedirectResponse(url="/home?msg=access-denied", status_code=303)
     conn = get_connection(); cur = conn.cursor()
     cur.execute("SELECT master_key,display_name,database_table,version,import_enabled,export_enabled,tenant_scoped FROM master_definitions WHERE active='Y' ORDER BY display_name")
-    masters = cur.fetchall(); conn.close()
+    masters = [(row[0], MASTERS.get(row[0], {}).get("title", row[1]), *row[2:]) for row in cur.fetchall()]; conn.close()
     return templates.TemplateResponse("masters/designer.html", {"request": request, "user": user, "masters": masters})
 
 
@@ -986,7 +990,9 @@ def master_designer_detail(request: Request, key: str):
         conn.close()
         return RedirectResponse(url="/masters/designer", status_code=303)
     cur.execute("SELECT display_name,import_enabled,export_enabled,version FROM master_definitions WHERE master_id=:1", (master_id,))
-    master = cur.fetchone()
+    master_row = cur.fetchone()
+    cfg = _cfg(key)
+    master = (cfg.get("title", master_row[0]) if cfg else master_row[0],) + tuple(master_row[1:])
     cur.execute("SELECT field_id,technical_name,display_label,excel_header,field_type,required,import_enabled,export_enabled,active,system_protected,custom_field,display_order FROM master_field_definitions WHERE master_id=:1 ORDER BY display_order,technical_name", (master_id,))
     fields = cur.fetchall(); conn.close()
     return templates.TemplateResponse("masters/designer_detail.html", {"request": request, "user": user, "key": key, "master": master, "fields": fields, "field_types": sorted(FIELD_TYPES)})

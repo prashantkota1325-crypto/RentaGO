@@ -110,6 +110,7 @@ def seed_metadata(conn, masters):
         row = cur.fetchone()
         if row:
             master_id = row[0]
+            cur.execute("UPDATE master_definitions SET display_name=:1,updated_at=SYSTIMESTAMP,updated_by='SYSTEM' WHERE master_id=:2", (cfg["title"], master_id))
         else:
             cur.execute(
                 "INSERT INTO master_definitions (master_id,master_key,display_name,database_table,route_key,description,active,import_enabled,export_enabled,version,tenant_scoped,created_at,created_by,updated_at,updated_by) "
