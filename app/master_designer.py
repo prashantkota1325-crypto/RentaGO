@@ -57,6 +57,7 @@ def master_keys():
         "companies", "corporate-admin-contacts", "contacts", "employees",
         "rentago-employees", "vendors", "vehicles", "drivers", "individuals",
         "contracts", "ratecards", "leads", "settings",
+        "company-ratecards", "individual-ratecards", "vendor-ratecards",
     )
 
 
@@ -91,7 +92,7 @@ def _field_seed(cfg, key):
         fields.append({"technical_name": name, "display_label": item.get("label") or labels.get(name, name),
                        "excel_header": labels.get(name, item.get("label") or name), "field_type": mapped_type,
                        "required": _bool("Y" if item.get("required") else "N"),
-                       "import_enabled": "N" if protected or generated or key == "ratecards" else "Y",
+                       "import_enabled": "N" if protected or generated or cfg.get("import_blocked") else "Y",
                        "export_enabled": "N" if protected else "Y", "system_protected": "Y" if protected else "N",
                        "generated_field": "Y" if generated else "N", "display_order": order,
                        "validation_rule": "EMAIL" if mapped_type == "EMAIL" else None})
@@ -110,12 +111,11 @@ def seed_metadata(conn, masters):
         row = cur.fetchone()
         if row:
             master_id = row[0]
-            cur.execute("UPDATE master_definitions SET display_name=:1,updated_at=SYSTIMESTAMP,updated_by='SYSTEM' WHERE master_id=:2", (cfg["title"], master_id))
         else:
             cur.execute(
                 "INSERT INTO master_definitions (master_id,master_key,display_name,database_table,route_key,description,active,import_enabled,export_enabled,version,tenant_scoped,created_at,created_by,updated_at,updated_by) "
                 "VALUES (:1,:2,:3,:4,:5,:6,'Y',:7,'Y',1,:8,SYSTIMESTAMP,'SYSTEM',SYSTIMESTAMP,'SYSTEM')",
-                (master_id, key, cfg["title"], cfg["table"], key, "RentaGO Master metadata",
+                (master_id, key, cfg.get("designer_title", cfg["title"]), cfg["table"], key, "RentaGO Master metadata",
                  "N" if cfg.get("import_blocked") else "Y", "Y" if cfg["table"] in {"companies", "employees", "vendors", "vehicles", "drivers", "individuals", "contacts", "contracts", "ratecards", "leads", "settings", "company_entities"} else "N"),
             )
         for definition in _field_seed(cfg, key):
@@ -123,8 +123,6 @@ def seed_metadata(conn, masters):
                         (master_id, definition["technical_name"]))
             existing_field = cur.fetchone()
             field_id = existing_field[0] if existing_field else "MF-" + uuid.uuid4().hex[:28].upper()
-            if existing_field and definition["technical_name"] == cfg.get("pk"):
-                cur.execute("UPDATE master_field_definitions SET export_enabled='Y' WHERE field_id=:1", (field_id,))
             if not existing_field:
                 cur.execute(
                     "INSERT INTO master_field_definitions (field_id,master_id,technical_name,display_label,excel_header,field_type,required,active,display_enabled,import_enabled,export_enabled,searchable,filterable,sortable,display_order,system_protected,generated_field,custom_field,validation_rule,created_at,created_by,updated_at,updated_by) "

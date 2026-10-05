@@ -483,16 +483,19 @@ MASTERS["rentago-employees"] = {
 MASTERS["company-ratecards"] = {
     **MASTERS["ratecards"],
     "title": "Company Rate Chart",
+    "designer_title": "Company Rate Cards",
     "base_where": "UPPER(owner_type)='COMPANY'",
 }
 MASTERS["individual-ratecards"] = {
     **MASTERS["ratecards"],
     "title": "Individual Rate Chart",
+    "designer_title": "Individual Rate Cards",
     "base_where": "UPPER(owner_type)='INDIVIDUAL'",
 }
 MASTERS["vendor-ratecards"] = {
     **MASTERS["ratecards"],
     "title": "Vendor Rate Chart",
+    "designer_title": "Vendor Rate Cards",
     "base_where": "UPPER(NVL(owner_type,'VENDOR'))='VENDOR'",
 }
 
@@ -975,7 +978,7 @@ def master_designer(request: Request):
         return RedirectResponse(url="/home?msg=access-denied", status_code=303)
     conn = get_connection(); cur = conn.cursor()
     cur.execute("SELECT master_key,display_name,database_table,version,import_enabled,export_enabled,tenant_scoped FROM master_definitions WHERE active='Y' ORDER BY display_name")
-    masters = [(row[0], MASTERS.get(row[0], {}).get("title", row[1]), *row[2:]) for row in cur.fetchall()]; conn.close()
+    masters = [(row[0], MASTERS.get(row[0], {}).get("designer_title", MASTERS.get(row[0], {}).get("title", row[1])), *row[2:]) for row in cur.fetchall()]; conn.close()
     return templates.TemplateResponse("masters/designer.html", {"request": request, "user": user, "masters": masters})
 
 
@@ -992,7 +995,7 @@ def master_designer_detail(request: Request, key: str):
     cur.execute("SELECT display_name,import_enabled,export_enabled,version FROM master_definitions WHERE master_id=:1", (master_id,))
     master_row = cur.fetchone()
     cfg = _cfg(key)
-    master = (cfg.get("title", master_row[0]) if cfg else master_row[0],) + tuple(master_row[1:])
+    master = (cfg.get("designer_title", cfg.get("title", master_row[0])) if cfg else master_row[0],) + tuple(master_row[1:])
     cur.execute("SELECT field_id,technical_name,display_label,excel_header,field_type,required,import_enabled,export_enabled,active,system_protected,custom_field,display_order FROM master_field_definitions WHERE master_id=:1 ORDER BY display_order,technical_name", (master_id,))
     fields = cur.fetchall(); conn.close()
     return templates.TemplateResponse("masters/designer_detail.html", {"request": request, "user": user, "key": key, "master": master, "fields": fields, "field_types": sorted(FIELD_TYPES)})

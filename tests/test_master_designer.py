@@ -14,7 +14,7 @@ MASTER_KEYS = {
 def test_thirteen_master_definitions_are_seeded():
     conn = get_connection(); cur = conn.cursor()
     cur.execute("SELECT master_key FROM master_definitions WHERE active='Y'")
-    assert MASTER_KEYS <= {row[0] for row in cur.fetchall()}
+    assert MASTER_KEYS | {"company-ratecards", "individual-ratecards", "vendor-ratecards"} <= {row[0] for row in cur.fetchall()}
     conn.close()
 
 
@@ -88,7 +88,7 @@ def test_field_order_and_configuration_flags_exist():
 def test_versions_are_published_and_rate_cards_disabled():
     conn = get_connection(); cur = conn.cursor()
     cur.execute("SELECT COUNT(*) FROM master_configuration_versions WHERE status='PUBLISHED'")
-    assert cur.fetchone()[0] == 13
+    assert cur.fetchone()[0] == 16
     cur.execute("SELECT import_enabled FROM master_definitions WHERE master_key='ratecards'")
     assert cur.fetchone()[0] == "N"
     conn.close()

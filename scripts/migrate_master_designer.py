@@ -95,7 +95,8 @@ def main():
     conn.commit()
     seed_metadata(conn, MASTERS)
     cur = conn.cursor()
-    for key in ("companies", "corporate-admin-contacts", "contacts", "employees", "rentago-employees", "vendors", "vehicles", "drivers", "individuals", "contracts", "ratecards", "leads", "settings"):
+    from app.master_designer import master_keys
+    for key in master_keys():
         cur.execute("SELECT master_id FROM master_definitions WHERE master_key=:1", (key,))
         master_id = cur.fetchone()[0]
         cur.execute("SELECT COUNT(*) FROM master_configuration_versions WHERE master_id=:1", (master_id,))
